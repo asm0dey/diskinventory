@@ -49,12 +49,13 @@ mvn test
 ## Package
 
 `bin/package.sh` builds a native installer for the current platform with
-jpackage — `.dmg` on macOS, `.deb` on Linux, `.msi` on Windows — with a
-minimal jlinked runtime (app module + JavaFX jmods) bundled, so the result
-needs no Java on the target machine. Installers are unsigned for now: macOS
-users right-click → Open the first time; Windows users click through
-SmartScreen.
+jpackage — `.dmg` on macOS, `.deb` on Linux — with a minimal jlinked runtime
+(app module + JavaFX jmods) bundled, so the result needs no Java on the
+target machine. Installers are unsigned for now: macOS users right-click →
+Open the first time.
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds all
-four artifacts (mac arm64 + x64, linux x64, windows x64) and attaches them to
-a GitHub Release.
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the
+artifacts (mac arm64 + x64, linux x64) and attaches them to a GitHub Release.
+
+Windows is not maintained — contributions welcome. (`jpackage --type msi`
+under git-bash built successfully as of v1.0.0 if you want a starting point.)

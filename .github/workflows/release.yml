@@ -12,9 +12,8 @@ jobs:
       matrix:
         include:
           - os: macos-14        # Apple Silicon -> .dmg (osx-aarch64)
-          - os: macos-13        # Intel -> .dmg (osx-x64)
+          - os: macos-15-intel  # Intel -> .dmg (osx-x64)
           - os: ubuntu-latest   # -> .deb (linux-x64)
-          - os: windows-latest  # -> .msi (windows-x64)
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

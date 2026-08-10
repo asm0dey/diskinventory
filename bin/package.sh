@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Builds a native installer for the current platform with jpackage:
-# .dmg on macOS, .deb on Linux, .msi on Windows (run under git-bash).
-# The bundled runtime is jlinked from the app module + JavaFX jmods, so the
-# result needs no Java on the target machine.
+# .dmg on macOS, .deb on Linux. The bundled runtime is jlinked from the app
+# module + JavaFX jmods, so the result needs no Java on the target machine.
+# Windows is not maintained - contributions welcome (jpackage --type msi
+# under git-bash worked as of v1.0.0 if you want a starting point).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -21,13 +22,8 @@ case "$(uname -s)" in
         TYPE=deb
         EXTRA_ARGS=(--linux-shortcut --linux-menu-group Utilities)
         ;;
-    MINGW*|MSYS*|CYGWIN*)
-        PLATFORM=windows-x64
-        TYPE=msi
-        EXTRA_ARGS=(--win-menu --win-shortcut)
-        ;;
     *)
-        echo "Unsupported platform: $(uname -s)" >&2
+        echo "Unsupported platform: $(uname -s) — Windows packaging is not maintained; patches welcome" >&2
         exit 1
         ;;
 esac
