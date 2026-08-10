@@ -1,0 +1,243 @@
+package com.kodewerk.diskinventory.model;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class DiskUsageModelTest {
+
+    private final DiskUsageModel model = new DiskUsageModel();
+
+    private static void write(Path file, int bytes) throws IOException {
+        Files.write(file, new byte[bytes]);
+    }
+
+    @Test
+    void sumsFilesAndSubdirectoriesRecursively(@TempDir Path root) throws IOException {
+        write(root.resolve("a.bin"), 100);
+        write(root.resolve("b.bin"), 50);
+
+        Path sub = Files.createDirectory(root.resolve("sub"));
+        write(sub.resolve("c.bin"), 300);
+
+        Path nested = Files.createDirectory(sub.resolve("nested"));
+        write(nested.resolve("d.bin"), 25);
+
+        DirectoryNode result = model.scan(root);
+
+        assertEquals(150, result.directFileSize());
+        assertEquals(475, result.totalSize());
+        assertEquals(1, result.children().size());
+
+        DirectoryNode subNode = result.child("sub").orElseThrow();
+        assertEquals(300, subNode.directFileSize());
+        assertEquals(325, subNode.totalSize());
+
+        DirectoryNode nestedNode = subNode.child("nested").orElseThrow();
+        assertEquals(25, nestedNode.totalSize());
+        assertTrue(nestedNode.children().isEmpty());
+        assertEquals(0, result.errorCount());
+    }
+
+    @Test
+    void childrenSortedBySizeDescending(@TempDir Path root) throws IOException {
+        for (int i = 1; i <= 3; i++) {
+            Path dir = Files.createDirectory(root.resolve("dir" + i));
+            write(dir.resolve("f.bin"), i * 100);
+        }
+
+        List<DirectoryNode> children = model.scan(root).children();
+
+        assertEquals(List.of("dir3", "dir2", "dir1"),
+                children.stream().map(DirectoryNode::name).toList());
+    }
+
+    @Test
+    void slicesAlwaysSumToTheTotal(@TempDir Path root) throws IOException {
+        write(root.resolve("loose.bin"), 7);
+        Path a = Files.createDirectory(root.resolve("a"));
+        write(a.resolve("x.bin"), 11);
+        Path b = Files.createDirectory(root.resolve("b"));
+        write(b.resolve("y.bin"), 13);
+
+        DirectoryNode result = model.scan(root);
+
+        long childSum = result.children().stream().mapToLong(DirectoryNode::totalSize).sum();
+        assertEquals(result.totalSize(), result.directFileSize() + childSum);
+    }
+
+    @Test
+    void emptyDirectoryIsZero(@TempDir Path root) throws IOException {
+        DirectoryNode result = model.scan(root);
+
+        assertEquals(0, result.totalSize());
+        assertEquals(0, result.directFileSize());
+        assertTrue(result.children().isEmpty());
+    }
+
+    @Test
+    void symlinksAreNeitherFollowedNorCounted(@TempDir Path root) throws IOException {
+        Path real = Files.createDirectory(root.resolve("real"));
+        write(real.resolve("big.bin"), 1000);
+        write(root.resolve("plain.bin"), 30);
+        Files.createSymbolicLink(root.resolve("dirlink"), real);
+        Files.createSymbolicLink(root.resolve("filelink"), real.resolve("big.bin"));
+
+        DirectoryNode result = model.scan(root);
+
+        // Only the real directory and the real files contribute.
+        assertEquals(1, result.children().size());
+        assertEquals(1030, result.totalSize());
+        assertEquals(30, result.directFileSize());
+        assertEquals(List.of("plain.bin"),
+                result.files().stream().map(FileEntry::name).toList());
+        assertEquals(1000, result.child("real").orElseThrow().totalSize());
+    }
+
+    @Test
+    void listenerSeesEveryDirectory(@TempDir Path root) throws IOException {
+        Files.createDirectory(root.resolve("one"));
+        Files.createDirectory(root.resolve("two"));
+
+        AtomicInteger visits = new AtomicInteger();
+        model.scan(root, (dir, dirs, bytes) -> visits.incrementAndGet());
+
+        assertEquals(3, visits.get());
+    }
+
+    @Test
+    void sparseFileAllocatedSizeIsSmallerThanLogical(@TempDir Path root) throws IOException {
+        write(root.resolve("dense.bin"), 65536);
+        try (var raf = new java.io.RandomAccessFile(root.resolve("sparse.bin").toFile(), "rw")) {
+            raf.setLength(16 * 1024 * 1024);    // a hole: no blocks written
+        }
+
+        DirectoryNode result = model.scan(root);
+
+        assertEquals(65536 + 16 * 1024 * 1024, result.totalSize(SizeMode.LOGICAL));
+
+        FileEntry dense = result.files().stream()
+                .filter(f -> f.name().equals("dense.bin")).findFirst().orElseThrow();
+        FileEntry sparse = result.files().stream()
+                .filter(f -> f.name().equals("sparse.bin")).findFirst().orElseThrow();
+
+        assertTrue(dense.allocated() >= dense.size(),
+                "dense file should occupy at least its logical size, was " + dense.allocated());
+        assertTrue(sparse.allocated() < sparse.size() / 2,
+                "sparse file should occupy far less than its 16 MiB logical size, was " + sparse.allocated());
+        assertEquals(dense.allocated() + sparse.allocated(), result.totalSize(SizeMode.ALLOCATED));
+        assertEquals(result.directFileSize(SizeMode.ALLOCATED), result.totalSize(SizeMode.ALLOCATED));
+    }
+
+    @Test
+    void allocatedTotalsAggregateThroughGraft(@TempDir Path parent) throws IOException {
+        Path child = Files.createDirectory(parent.resolve("child"));
+        write(child.resolve("c.bin"), 4096);
+        write(parent.resolve("p.bin"), 4096);
+
+        DirectoryNode known = model.scan(child);
+        DirectoryNode result = model.scanParent(known, (d, n, b) -> { });
+
+        assertEquals(known.totalSize(SizeMode.ALLOCATED) + result.directFileSize(SizeMode.ALLOCATED),
+                result.totalSize(SizeMode.ALLOCATED));
+        assertTrue(result.totalSize(SizeMode.ALLOCATED) >= 8192);
+    }
+
+    @Test
+    void largestFilesRanksRecursivelyAcrossTheSubtree(@TempDir Path root) throws IOException {
+        write(root.resolve("mid.bin"), 500);
+        Path a = Files.createDirectory(root.resolve("a"));
+        write(a.resolve("big.bin"), 900);
+        Path deep = Files.createDirectory(a.resolve("deep"));
+        write(deep.resolve("biggest.bin"), 1000);
+        Path b = Files.createDirectory(root.resolve("b"));
+        write(b.resolve("small.bin"), 100);
+
+        DirectoryNode result = model.scan(root);
+
+        List<FileRef> top3 = result.largestFiles(3, SizeMode.LOGICAL);
+        assertEquals(List.of("biggest.bin", "big.bin", "mid.bin"),
+                top3.stream().map(r -> r.file().name()).toList());
+        assertEquals(root.resolve("a").resolve("deep").resolve("biggest.bin"),
+                top3.getFirst().path());
+
+        assertEquals(4, result.largestFiles(100, SizeMode.LOGICAL).size());
+        assertTrue(result.largestFiles(0, SizeMode.LOGICAL).isEmpty());
+    }
+
+    @Test
+    void interruptCancelsTheScan(@TempDir Path root) throws IOException {
+        Files.createDirectory(root.resolve("one"));
+
+        Thread.currentThread().interrupt();
+        try {
+            assertThrows(DiskUsageModel.ScanCancelledException.class, () -> model.scan(root));
+        } finally {
+            assertTrue(Thread.interrupted(), "interrupt flag should still be set; also clears it");
+        }
+    }
+
+    @Test
+    void filesRetainedAndSortedBySizeDescending(@TempDir Path root) throws IOException {
+        write(root.resolve("small.bin"), 10);
+        write(root.resolve("large.bin"), 500);
+        write(root.resolve("medium.bin"), 100);
+
+        DirectoryNode result = model.scan(root);
+
+        assertEquals(List.of("large.bin", "medium.bin", "small.bin"),
+                result.files().stream().map(FileEntry::name).toList());
+        assertEquals(610, result.files().stream().mapToLong(FileEntry::size).sum());
+        assertEquals(result.directFileSize(),
+                result.files().stream().mapToLong(FileEntry::size).sum());
+    }
+
+    @Test
+    void scanParentGraftsKnownSubtreeWithoutRewalkingIt(@TempDir Path parent) throws IOException {
+        Path child = Files.createDirectory(parent.resolve("child"));
+        write(child.resolve("c.bin"), 200);
+        Path sibling = Files.createDirectory(parent.resolve("sibling"));
+        write(sibling.resolve("s.bin"), 300);
+        write(parent.resolve("loose.bin"), 50);
+
+        DirectoryNode known = model.scan(child);
+
+        AtomicInteger visited = new AtomicInteger();
+        DirectoryNode result = model.scanParent(known, (dir, dirs, bytes) -> visited.incrementAndGet());
+
+        assertEquals(parent, result.path());
+        assertEquals(550, result.totalSize());
+        assertEquals(50, result.directFileSize());
+        // The known subtree is grafted by reference, not re-scanned.
+        assertSame(known, result.child("child").orElseThrow());
+        assertEquals(300, result.child("sibling").orElseThrow().totalSize());
+        // Walk entered parent and sibling only — never the known child.
+        assertEquals(2, visited.get());
+    }
+
+    @Test
+    void scanParentOfFilesystemRootReturnsSameNode() throws IOException {
+        DirectoryNode fsRoot = new DirectoryNode(Path.of("/"), 0, 0, 0, 0, List.of(), List.of(), 0);
+
+        assertSame(fsRoot, model.scanParent(fsRoot, (d, n, b) -> { }));
+    }
+
+    @Test
+    void rejectsNonDirectory(@TempDir Path root) throws IOException {
+        Path file = root.resolve("plain.txt");
+        write(file, 1);
+
+        assertThrows(IOException.class, () -> model.scan(file));
+        assertThrows(IOException.class, () -> model.scan(root.resolve("missing")));
+    }
+}
