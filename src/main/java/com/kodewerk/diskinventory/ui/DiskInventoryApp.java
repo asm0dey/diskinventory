@@ -289,9 +289,9 @@ public class DiskInventoryApp extends Application {
                         setText(null);
                         setTooltip(null);
                     } else {
-                        setText(ref.file().name());
-                        Tooltip tip = new Tooltip(
-                                Sizes.human(ref.file().size(mode)) + "  " + ref.path());
+                        setText(String.format("%9s  %s",
+                                Sizes.human(ref.file().size(mode)), ref.file().name()));
+                        Tooltip tip = new Tooltip(ref.path().toString());
                         tip.setShowDelay(Duration.millis(200));
                         setTooltip(tip);
                     }
