@@ -45,3 +45,16 @@ mvn javafx:run
 ```
 mvn test
 ```
+
+## Package
+
+`bin/package.sh` builds a native installer for the current platform with
+jpackage — `.dmg` on macOS, `.deb` on Linux, `.msi` on Windows — with a
+minimal jlinked runtime (app module + JavaFX jmods) bundled, so the result
+needs no Java on the target machine. Installers are unsigned for now: macOS
+users right-click → Open the first time; Windows users click through
+SmartScreen.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds all
+four artifacts (mac arm64 + x64, linux x64, windows x64) and attaches them to
+a GitHub Release.
