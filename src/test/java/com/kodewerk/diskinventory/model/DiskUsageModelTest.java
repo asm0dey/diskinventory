@@ -1,6 +1,8 @@
 package com.kodewerk.diskinventory.model;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -116,6 +118,7 @@ class DiskUsageModelTest {
     }
 
     @Test
+    @EnabledOnOs({OS.MAC, OS.LINUX})    // Windows has no probe; allocated falls back to logical
     void sparseFileAllocatedSizeIsSmallerThanLogical(@TempDir Path root) throws IOException {
         write(root.resolve("dense.bin"), 65536);
         try (var raf = new java.io.RandomAccessFile(root.resolve("sparse.bin").toFile(), "rw")) {
