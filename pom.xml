@@ -56,7 +56,7 @@
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>com.kodewerk.diskinventory.ui.DiskInventoryApp</mainClass>
+                    <mainClass>com.kodewerk.diskinventory.ui.Main</mainClass>
                     <options>
                         <option>--enable-native-access=com.kodewerk.diskinventory,javafx.graphics</option>
                     </options>

@@ -40,6 +40,16 @@ or without an argument to get a directory chooser:
 mvn javafx:run
 ```
 
+Or headlessly, printing totals without opening a window:
+
+```
+mvn -q -DskipTests package
+java -cp target/diskinventory.jar com.kodewerk.diskinventory.ui.Main --scan /path/to/scan
+```
+
+Exit codes: `0` scan completed, `1` path missing or unreadable, `3` allocated
+sizes are unavailable on this build and the reported figures are logical only.
+
 ## Test
 
 ```

@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 
 JFX_VERSION=25.0.1
 MODULE=com.kodewerk.diskinventory
-MAIN_CLASS=com.kodewerk.diskinventory.ui.DiskInventoryApp
+MAIN_CLASS=com.kodewerk.diskinventory.ui.Main
 
 case "$(uname -s)" in
     Darwin)

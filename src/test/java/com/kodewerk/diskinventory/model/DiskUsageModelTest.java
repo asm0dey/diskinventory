@@ -243,4 +243,10 @@ class DiskUsageModelTest {
         assertThrows(IOException.class, () -> model.scan(file));
         assertThrows(IOException.class, () -> model.scan(root.resolve("missing")));
     }
+
+    @Test
+    @EnabledOnOs({OS.MAC, OS.LINUX})    // Windows has no probe
+    void allocatedSizesAreSupportedOnMacAndLinux() {
+        assertTrue(DiskUsageModel.allocatedSizeSupported());
+    }
 }

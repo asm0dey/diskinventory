@@ -55,6 +55,18 @@ public final class DiskUsageModel {
         return scan(parent, listener, known);
     }
 
+    /**
+     * Whether allocated (on-disk) sizes are real on this platform and build.
+     * Performs an actual lstat downcall rather than only constructing the
+     * probe: a native image built without a registered downcall stub still
+     * constructs a probe successfully, and only fails when the call is made.
+     */
+    public static boolean allocatedSizeSupported() {
+        try (AllocatedSizeProbe probe = AllocatedSizeProbe.create()) {
+            return probe != null && probe.allocatedOf(Path.of("."), -1L) >= 0L;
+        }
+    }
+
     private DirectoryNode scan(Path root, ScanListener listener, DirectoryNode graft) throws IOException {
         if (!Files.isDirectory(root)) {
             throw new IOException("Not a directory: " + root);
