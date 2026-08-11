@@ -16,10 +16,10 @@ native build is a second, independent target.
 ## Glossary
 
 - **NIK Full** — BellSoft's GraalVM distribution, "Full" variant, which bundles
-  JavaFX. Version 25.0.1 is installed locally at
-  `~/.sdkman/candidates/java/25.0.1.fx-nik` and ships `native-image 25.0.1`.
+  JavaFX. Version 25.0.4 is installed locally at
+  `~/.sdkman/candidates/java/25.0.4.fx-nik` and ships `native-image 25.0.4`.
 - **LibericaFX** — the OpenJFX build inside NIK Full. It appears as ordinary
-  platform modules (`javafx.controls@25.0.1`) in the runtime image, plus static
+  platform modules (`javafx.controls@25.0.4`) in the runtime image, plus static
   libraries (`libglass.a`, `libglassgtk3.a`, `libprism_es2.a`) that native-image
   links into the executable.
 - **Reachability metadata** — JSON describing reflection, resources, JNI and
@@ -94,7 +94,7 @@ bound to `package`, active only under `-Pnative` so `mvn test` and
 </buildArgs>
 ```
 
-`-H:±ForeignAPISupport` is already default-enabled in NIK 25.0.1, so no FFM
+`-H:±ForeignAPISupport` is already default-enabled in NIK 25.0.4, so no FFM
 flag is passed.
 
 The profile also asserts the JavaFX coupling described in ADR 002:
@@ -102,7 +102,7 @@ The profile also asserts the JavaFX coupling described in ADR 002:
 `${java.home}/lib/javafx.properties` with `keyPrefix=nik.`, then
 `maven-enforcer-plugin:requireProperty` checks `nik.javafx.version` against
 regex `\Q${javafx.version}\E(\+.*)?`. The prefix match is required because NIK
-reports `25.0.1+1` where Maven says `25.0.1`. A missing properties file fails
+reports `25.0.4+1` where Maven says `25.0.4`. A missing properties file fails
 the build too, which is the correct response to being run on NIK Standard.
 
 ### 3. Release workflow
@@ -199,6 +199,15 @@ and the Central jars are shadowed. This works today only because
 `javafx.version` equals LibericaFX's version. The profile asserts the match
 rather than trusting it, because a mismatch means compiling against one JavaFX
 and imaging another, with no visible symptom.
+
+The NIK version itself needs the same care. NIK 25.0.1+12's bundled
+`JavaFXFeature` registers `com.sun.glass.ui.gtk.GtkView.notifyInputMethodDraw`,
+a method no current OpenJFX has — it is now `notifyInputMethodLinux` — so every
+JavaFX image build fails with `NoSuchMethodException` regardless of
+`javafx.version` ([bell-sw/LibericaNIK#34](https://github.com/bell-sw/LibericaNIK/issues/34)).
+Fixed upstream; the project builds on NIK 25.0.4, with `javafx.version` moved to
+25.0.4 to match its LibericaFX. `bin/package.sh`'s `JFX_VERSION` tracks the same
+value so the jpackage path links the jmods it compiled against.
 
 ### ADR 003 — No static or musl builds, ever
 `Linker.defaultLookup()` is unsupported in static executables, and that is

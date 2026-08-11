@@ -6,17 +6,17 @@
 
 **Architecture:** A new `ui.Main` launcher class provides both the classpath-safe JavaFX entry point that native images need and a headless `--scan` mode used as a build-time canary. A Maven `native` profile drives `native-image` via `native-maven-plugin`; reachability metadata is captured once with the tracing agent and committed. Two release-only CI jobs produce per-platform tarballs.
 
-**Tech Stack:** Java 25, JavaFX 25.0.1, Maven, Liberica NIK Full 25.0.1 (`native-image 25.0.1`), GraalVM `native-maven-plugin` 0.10.6, GitHub Actions.
+**Tech Stack:** Java 25, JavaFX 25.0.4, Maven, Liberica NIK Full 25.0.4 (`native-image 25.0.4`), GraalVM `native-maven-plugin` 0.10.6, GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-08-11-native-image-liberica-nik-design.md`
 
 ## Global Constraints
 
-- Local NIK Full install: `~/.sdkman/candidates/java/25.0.1.fx-nik`. Every native build and every tracing-agent run uses that as `JAVA_HOME`. Referred to below as `$NIK`.
-- `javafx.version` in `pom.xml` is `25.0.1`; NIK reports `25.0.1+1` in `$NIK/lib/javafx.properties`. Comparisons are prefix matches, never string equality.
+- Local NIK Full install: `~/.sdkman/candidates/java/25.0.4.fx-nik`. Every native build and every tracing-agent run uses that as `JAVA_HOME`. Referred to below as `$NIK`.
+- `javafx.version` in `pom.xml` is `25.0.4`; NIK reports `25.0.4+1` in `$NIK/lib/javafx.properties`. Comparisons are prefix matches, never string equality.
 - Never build with `--static` or musl. `Linker.defaultLookup()` is unsupported in static executables and `AllocatedSizeProbe` depends on it.
 - Reachability metadata lives in `src/main/resources/META-INF/native-image/com.kodewerk/diskinventory/`.
-- `-H:±ForeignAPISupport` is enabled by default in NIK 25.0.1; do not pass it. Native access is granted with `-H:EnableNativeAccess=ALL-UNNAMED`.
+- `-H:±ForeignAPISupport` is enabled by default in NIK 25.0.4; do not pass it. Native access is granted with `-H:EnableNativeAccess=ALL-UNNAMED`.
 - Platform names in artifact filenames match `bin/package.sh`: `linux-x64`, `osx-aarch64`.
 - The Linux native job builds inside `container: ubuntu:22.04` (glibc 2.35 floor). The existing `.deb`/`.dmg` jobs are untouched.
 - Native CI runs on tags only. No push/PR builds, no xvfb, no UI self-test mode.
@@ -274,7 +274,7 @@ Expected: the window opens showing a pie chart of `/usr/share/doc`. Close it.
 ```bash
 mvn -q -DskipTests package
 java --enable-native-access=ALL-UNNAMED \
-    -cp "target/diskinventory.jar:$(ls ~/.m2/repository/org/openjfx/javafx-*/25.0.1/*.jar | tr '\n' ':')" \
+    -cp "target/diskinventory.jar:$(ls ~/.m2/repository/org/openjfx/javafx-*/25.0.4/*.jar | tr '\n' ':')" \
     com.kodewerk.diskinventory.ui.Main --scan .
 echo "exit=$?"
 ```
@@ -378,7 +378,7 @@ In `pom.xml`, after the closing `</build>` tag and before `</project>`, add:
                                     <rules>
                                         <requireProperty>
                                             <property>nik.javafx.version</property>
-                                            <!-- NIK reports 25.0.1+1 where Maven says 25.0.1. -->
+                                            <!-- NIK reports 25.0.4+1 where Maven says 25.0.4. -->
                                             <regex>\Q${javafx.version}\E(\+.*)?</regex>
                                             <regexMessage>JAVA_HOME's LibericaFX is ${nik.javafx.version} but javafx.version is ${javafx.version}; compiling against one JavaFX and imaging another</regexMessage>
                                         </requireProperty>
@@ -431,16 +431,16 @@ Expected: BUILD SUCCESS, no native-image invocation, no NIK required.
 - [ ] **Step 3: Prove the version assertion fires**
 
 ```bash
-JAVA_HOME=~/.sdkman/candidates/java/25.0.1.fx-nik \
-    mvn -Pnative -DskipTests -Djavafx.version=25.0.0 package 2>&1 | tail -20
+JAVA_HOME=~/.sdkman/candidates/java/25.0.4.fx-nik \
+    mvn -Pnative -DskipTests -Djavafx.version=25.0.2 package 2>&1 | tail -20
 ```
 
-Expected: BUILD FAILURE from `maven-enforcer-plugin` with the message `JAVA_HOME's LibericaFX is 25.0.1+1 but javafx.version is 25.0.0`.
+Expected: BUILD FAILURE from `maven-enforcer-plugin` with the message `JAVA_HOME's LibericaFX is 25.0.4+1 but javafx.version is 25.0.2`.
 
 - [ ] **Step 4: Build the native image**
 
 ```bash
-JAVA_HOME=~/.sdkman/candidates/java/25.0.1.fx-nik mvn -Pnative -DskipTests package
+JAVA_HOME=~/.sdkman/candidates/java/25.0.4.fx-nik mvn -Pnative -DskipTests package
 ls -lh target/diskinventory
 ```
 
@@ -468,7 +468,7 @@ git commit -m "build: add native profile for Liberica NIK Full
 JavaFX resolves from NIK's platform modules under a classpath native build,
 so the Maven version and LibericaFX's must agree; properties-maven-plugin reads
 JAVA_HOME's javafx.properties and enforcer asserts the match, prefix-wise,
-since NIK reports 25.0.1+1 against Maven's 25.0.1."
+since NIK reports 25.0.4+1 against Maven's 25.0.4."
 ```
 
 ---
@@ -489,7 +489,7 @@ since NIK reports 25.0.1+1 against Maven's 25.0.1."
 
 ```bash
 mvn -q -DskipTests package dependency:build-classpath -Dmdep.outputFile=target/cp.txt
-export NIK=~/.sdkman/candidates/java/25.0.1.fx-nik
+export NIK=~/.sdkman/candidates/java/25.0.4.fx-nik
 export CP="target/classes:$(cat target/cp.txt)"
 export OUT=src/main/resources/META-INF/native-image/com.kodewerk/diskinventory
 mkdir -p "$OUT"
@@ -540,7 +540,7 @@ Expected: no matches. If any appear, delete those entries by hand — they are a
 - [ ] **Step 5: Rebuild and verify the canary flips**
 
 ```bash
-JAVA_HOME=~/.sdkman/candidates/java/25.0.1.fx-nik mvn -Pnative -DskipTests package
+JAVA_HOME=~/.sdkman/candidates/java/25.0.4.fx-nik mvn -Pnative -DskipTests package
 ./target/diskinventory --scan .
 echo "exit=$?"
 ```
@@ -568,7 +568,7 @@ normally.
 
 ```
 mvn -q -DskipTests package dependency:build-classpath -Dmdep.outputFile=target/cp.txt
-NIK=~/.sdkman/candidates/java/25.0.1.fx-nik
+NIK=~/.sdkman/candidates/java/25.0.4.fx-nik
 CP="target/classes:$(cat target/cp.txt)"
 OUT=src/main/resources/META-INF/native-image/com.kodewerk/diskinventory
 
@@ -609,7 +609,7 @@ for every target platform itself."
 - [ ] **Step 1: Time the serial build (current state)**
 
 ```bash
-JAVA_HOME=~/.sdkman/candidates/java/25.0.1.fx-nik mvn -q -Pnative -DskipTests package
+JAVA_HOME=~/.sdkman/candidates/java/25.0.4.fx-nik mvn -q -Pnative -DskipTests package
 cp target/diskinventory /tmp/diskinventory-serial
 for i in 1 2 3; do /usr/bin/time -f "serial %e s" /tmp/diskinventory-serial --scan /usr >/dev/null; done
 ```
@@ -627,7 +627,7 @@ Temporarily add to the `native-maven-plugin` `buildArgs` in `pom.xml`:
 Then:
 
 ```bash
-JAVA_HOME=~/.sdkman/candidates/java/25.0.1.fx-nik mvn -q -Pnative -DskipTests package
+JAVA_HOME=~/.sdkman/candidates/java/25.0.4.fx-nik mvn -q -Pnative -DskipTests package
 cp target/diskinventory /tmp/diskinventory-parallel
 for i in 1 2 3; do /usr/bin/time -f "parallel %e s" /tmp/diskinventory-parallel --scan /usr >/dev/null; done
 ```
@@ -657,7 +657,7 @@ Replace the example numbers with the real ones in either case. Ties go to serial
 - [ ] **Step 4: Verify the pinned build still passes the canary**
 
 ```bash
-JAVA_HOME=~/.sdkman/candidates/java/25.0.1.fx-nik mvn -q -Pnative -DskipTests package
+JAVA_HOME=~/.sdkman/candidates/java/25.0.4.fx-nik mvn -q -Pnative -DskipTests package
 ./target/diskinventory --scan .
 echo "exit=$?"
 ```
@@ -703,7 +703,7 @@ Expected: `Apache Maven 3.9.11`.
 - [ ] **Step 2: Verify the wrapper drives the native build**
 
 ```bash
-JAVA_HOME=~/.sdkman/candidates/java/25.0.1.fx-nik ./mvnw -q -Pnative -DskipTests package
+JAVA_HOME=~/.sdkman/candidates/java/25.0.4.fx-nik ./mvnw -q -Pnative -DskipTests package
 ./target/diskinventory --scan .
 echo "exit=$?"
 ```
@@ -857,7 +857,7 @@ Run before declaring the work done:
 
 ```bash
 mvn -q test                                                          # default build untouched
-JAVA_HOME=~/.sdkman/candidates/java/25.0.1.fx-nik ./mvnw -q -Pnative -DskipTests package
+JAVA_HOME=~/.sdkman/candidates/java/25.0.4.fx-nik ./mvnw -q -Pnative -DskipTests package
 ./target/diskinventory --scan .; echo "exit=$?"                      # expect exit=0
 ./target/diskinventory                                               # GUI opens, drill-down works
 bash bin/package.sh                                                  # jpackage path still builds
