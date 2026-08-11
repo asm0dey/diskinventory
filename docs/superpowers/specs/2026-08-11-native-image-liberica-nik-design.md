@@ -62,7 +62,11 @@ count. Exit codes:
 
 Exit code `3` is the point. A native image that loses the `lstat` downcall keeps
 running and quietly reports the wrong numbers; this turns that into a build
-failure. It needs one new method on `DiskUsageModel`:
+failure. An unregistered downcall stub surfaces either when the handle is
+created or when the call is made, so the check performs a real call and
+`AllocatedSizeProbe.create` catches `Throwable`, not `RuntimeException` —
+`MissingForeignRegistrationError` is an `Error`. It needs one new method on
+`DiskUsageModel`:
 
 ```java
 public static boolean allocatedSizeSupported() {

@@ -58,8 +58,9 @@ public final class DiskUsageModel {
     /**
      * Whether allocated (on-disk) sizes are real on this platform and build.
      * Performs an actual lstat downcall rather than only constructing the
-     * probe: a native image built without a registered downcall stub still
-     * constructs a probe successfully, and only fails when the call is made.
+     * probe: an unregistered downcall stub in a native image surfaces either
+     * when the handle is created or when the call is made, depending on the
+     * build, and only a real call rules out both.
      */
     public static boolean allocatedSizeSupported() {
         try (AllocatedSizeProbe probe = AllocatedSizeProbe.create()) {
