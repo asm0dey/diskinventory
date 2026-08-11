@@ -70,3 +70,25 @@ artifacts (mac arm64, linux x64) and attaches them to a GitHub Release.
 Intel macOS and Windows builds are not maintained — PRs welcome. The
 machinery is close: `bin/package.sh` handles osx-x64 already, and
 `jpackage --type msi` under git-bash built successfully as of v1.0.0.
+
+### Regenerating native-image metadata
+
+Needed only if reflection, resources, or FFM usage changes. Requires NIK Full
+and a display; the agent writes its config when the JVM exits, so quit the app
+normally.
+
+```
+mvn -q -DskipTests package dependency:build-classpath -Dmdep.outputFile=target/cp.txt -Dmdep.includeScope=runtime
+NIK=~/.sdkman/candidates/java/25.0.4.fx-nik
+CP="target/classes:$(cat target/cp.txt)"
+OUT=src/main/resources/META-INF/native-image/com.kodewerk/diskinventory
+
+$NIK/bin/java -agentlib:native-image-agent=config-output-dir=$OUT -cp "$CP" \
+    com.kodewerk.diskinventory.ui.Main            # click through every screen, then quit
+$NIK/bin/java -agentlib:native-image-agent=config-merge-dir=$OUT -cp "$CP" \
+    com.kodewerk.diskinventory.ui.Main --scan .
+```
+
+JavaFX internals need no entries here: NIK's own build-time feature registers
+them for every platform, which is why one Linux capture is valid for the macOS
+build too.
