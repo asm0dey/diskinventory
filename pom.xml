@@ -64,4 +64,90 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            Native image via Liberica NIK Full. Run with JAVA_HOME pointing at a
+            NIK Full install; JavaFX comes from NIK's own platform modules, not
+            from the Maven jars, which are shadowed on the classpath. The two
+            must agree, so the build asserts it rather than hoping.
+        -->
+        <profile>
+            <id>native</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>properties-maven-plugin</artifactId>
+                        <version>1.2.1</version>
+                        <executions>
+                            <execution>
+                                <id>read-nik-javafx-version</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>read-project-properties</goal>
+                                </goals>
+                                <configuration>
+                                    <!-- Absent on NIK Standard, which is exactly when this build must fail. -->
+                                    <files>
+                                        <file>${java.home}/lib/javafx.properties</file>
+                                    </files>
+                                    <keyPrefix>nik.</keyPrefix>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <version>3.6.3</version>
+                        <executions>
+                            <execution>
+                                <id>assert-javafx-matches-nik</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireProperty>
+                                            <property>nik.javafx.version</property>
+                                            <!-- NIK reports 25.0.1+1 where Maven says 25.0.1. -->
+                                            <regex>\Q${javafx.version}\E(\+.*)?</regex>
+                                            <regexMessage>JAVA_HOME's LibericaFX is ${nik.javafx.version} but javafx.version is ${javafx.version}; compiling against one JavaFX and imaging another</regexMessage>
+                                        </requireProperty>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <version>0.10.6</version>
+                        <executions>
+                            <execution>
+                                <id>build-native</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>compile-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <imageName>diskinventory</imageName>
+                            <mainClass>com.kodewerk.diskinventory.ui.Main</mainClass>
+                            <metadataRepository>
+                                <enabled>true</enabled>
+                            </metadataRepository>
+                            <buildArgs>
+                                <!-- ForeignAPISupport is on by default in NIK 25; only the permission is needed. -->
+                                <buildArg>-H:EnableNativeAccess=ALL-UNNAMED</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
