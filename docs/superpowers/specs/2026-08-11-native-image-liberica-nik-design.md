@@ -67,7 +67,7 @@ failure. It needs one new method on `DiskUsageModel`:
 ```java
 public static boolean allocatedSizeSupported() {
     try (AllocatedSizeProbe probe = AllocatedSizeProbe.create()) {
-        return probe != null;
+        return probe != null && probe.allocatedOf(Path.of("."), -1L) >= 0L;
     }
 }
 ```
@@ -80,19 +80,22 @@ ambiguity.
 
 ### 2. `native` Maven profile
 
-`org.graalvm.buildtools:native-maven-plugin` (newest 0.11.x at implementation
-time), goal `compile-no-fork` bound to `package`, active only under `-Pnative`
-so `mvn test` and `bin/package.sh` behave exactly as they do today.
+`org.graalvm.buildtools:native-maven-plugin` 0.10.6, goal `compile-no-fork`
+bound to `package`, active only under `-Pnative` so `mvn test` and
+`bin/package.sh` behave exactly as they do today.
 
 ```xml
 <imageName>diskinventory</imageName>
 <mainClass>com.kodewerk.diskinventory.ui.Main</mainClass>
 <metadataRepository><enabled>true</enabled></metadataRepository>
 <buildArgs>
-  <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
+  <buildArg>-H:EnableNativeAccess=ALL-UNNAMED</buildArg>
   <!-- --gc=parallel, or no GC flag at all; decided by measurement, ADR 006 -->
 </buildArgs>
 ```
+
+`-H:±ForeignAPISupport` is already default-enabled in NIK 25.0.1, so no FFM
+flag is passed.
 
 The profile also asserts the JavaFX coupling described in ADR 002:
 `properties-maven-plugin:read-project-properties` reads
