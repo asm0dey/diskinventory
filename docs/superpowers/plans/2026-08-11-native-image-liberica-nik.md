@@ -273,7 +273,7 @@ Expected: the window opens showing a pie chart of `/usr/share/doc`. Close it.
 
 ```bash
 mvn -q -DskipTests package
-java --enable-native-access=ALL-UNNAMED \
+java --enable-native-access=ALL-UNNAMED,javafx.graphics \
     -cp "target/diskinventory.jar:$(ls ~/.m2/repository/org/openjfx/javafx-*/25.0.4/*.jar | tr '\n' ':')" \
     com.kodewerk.diskinventory.ui.Main --scan .
 echo "exit=$?"
@@ -499,7 +499,7 @@ mkdir -p "$OUT"
 
 ```bash
 $NIK/bin/java -agentlib:native-image-agent=config-output-dir=$OUT \
-    --enable-native-access=ALL-UNNAMED -cp "$CP" com.kodewerk.diskinventory.ui.Main
+    --enable-native-access=ALL-UNNAMED,javafx.graphics -cp "$CP" com.kodewerk.diskinventory.ui.Main
 ```
 
 No argument, so the `DirectoryChooser` opens first — that path must be exercised. Then click through, in this order:
@@ -518,7 +518,7 @@ Expected: `ls $OUT` shows at least `reachability-metadata.json`.
 
 ```bash
 $NIK/bin/java -agentlib:native-image-agent=config-merge-dir=$OUT \
-    --enable-native-access=ALL-UNNAMED -cp "$CP" com.kodewerk.diskinventory.ui.Main --scan .
+    --enable-native-access=ALL-UNNAMED,javafx.graphics -cp "$CP" com.kodewerk.diskinventory.ui.Main --scan .
 ```
 
 Expected: exit 0, and the JSON now contains a `foreign` section describing the `lstat` downcall.

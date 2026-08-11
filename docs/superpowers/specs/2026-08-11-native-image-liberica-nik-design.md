@@ -141,19 +141,19 @@ platform values `linux-x64` and `osx-aarch64`.
 Captured once, locally, with the tracing agent, then committed. Two runs, merged:
 
 ```bash
-mvn -q -DskipTests package dependency:build-classpath -Dmdep.outputFile=target/cp.txt
+mvn -q -DskipTests package dependency:build-classpath -Dmdep.outputFile=target/cp.txt -Dmdep.includeScope=runtime
 CP=target/classes:$(cat target/cp.txt)
 OUT=src/main/resources/META-INF/native-image/com.kodewerk/diskinventory
 
 # 1. GUI, no argument, so the DirectoryChooser path is exercised too
 $NIK/bin/java -agentlib:native-image-agent=config-output-dir=$OUT \
-    -cp $CP com.kodewerk.diskinventory.ui.Main
+    --enable-native-access=ALL-UNNAMED,javafx.graphics -cp $CP com.kodewerk.diskinventory.ui.Main
 # click: choose a directory, drill into a slice, up past the launch point,
 # largest-files list, size-mode toggle, df panel, quit
 
 # 2. headless scan, which is what registers the FFM downcall descriptor
 $NIK/bin/java -agentlib:native-image-agent=config-merge-dir=$OUT \
-    -cp $CP com.kodewerk.diskinventory.ui.Main --scan .
+    --enable-native-access=ALL-UNNAMED,javafx.graphics -cp $CP com.kodewerk.diskinventory.ui.Main --scan .
 ```
 
 The generated JSON is reviewed for machine-local absolute paths before commit.
