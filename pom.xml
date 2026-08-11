@@ -143,6 +143,8 @@
                             <buildArgs>
                                 <!-- ForeignAPISupport is on by default in NIK 25; only the permission is needed. -->
                                 <buildArg>-H:EnableNativeAccess=ALL-UNNAMED,javafx.graphics</buildArg>
+                                <!-- Measured on /usr, best of 3: serial 4.0s, parallel 3.7s. -->
+                                <buildArg>--gc=parallel</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>
