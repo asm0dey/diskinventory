@@ -12,7 +12,6 @@ jobs:
       matrix:
         include:
           - os: macos-14        # Apple Silicon -> .dmg (osx-aarch64)
-          - os: macos-15-intel  # Intel -> .dmg (osx-x64)
           - os: ubuntu-latest   # -> .deb (linux-x64)
     runs-on: ${{ matrix.os }}
     steps:

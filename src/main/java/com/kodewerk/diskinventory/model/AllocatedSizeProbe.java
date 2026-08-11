@@ -47,8 +47,14 @@ final class AllocatedSizeProbe implements AutoCloseable {
         }
         try {
             Linker linker = Linker.nativeLinker();
-            MethodHandle handle = linker.downcallHandle(
-                    linker.defaultLookup().find("lstat").orElseThrow(),
+            // On x86_64 darwin the plain "lstat" symbol uses the legacy
+            // 32-bit-inode struct layout; the modern layout (blocks @104) is
+            // "lstat$INODE64". arm64 has no $INODE64 variants - its "lstat"
+            // is already the modern struct. Prefer $INODE64, fall back.
+            MemorySegment symbol = linker.defaultLookup().find("lstat$INODE64")
+                    .or(() -> linker.defaultLookup().find("lstat"))
+                    .orElseThrow();
+            MethodHandle handle = linker.downcallHandle(symbol,
                     FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
             return new AllocatedSizeProbe(Arena.ofConfined(), handle, offset);
         } catch (RuntimeException e) {

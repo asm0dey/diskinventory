@@ -55,7 +55,8 @@ target machine. Installers are unsigned for now: macOS users right-click →
 Open the first time.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the
-artifacts (mac arm64 + x64, linux x64) and attaches them to a GitHub Release.
+artifacts (mac arm64, linux x64) and attaches them to a GitHub Release.
 
-Windows is not maintained — contributions welcome. (`jpackage --type msi`
-under git-bash built successfully as of v1.0.0 if you want a starting point.)
+Intel macOS and Windows builds are not maintained — PRs welcome. The
+machinery is close: `bin/package.sh` handles osx-x64 already, and
+`jpackage --type msi` under git-bash built successfully as of v1.0.0.
