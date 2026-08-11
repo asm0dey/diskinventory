@@ -15,7 +15,7 @@
     <properties>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <javafx.version>25.0.1</javafx.version>
+        <javafx.version>25.0.4</javafx.version>
         <junit.version>5.11.4</junit.version>
     </properties>
 
@@ -112,7 +112,7 @@
                                     <rules>
                                         <requireProperty>
                                             <property>nik.javafx.version</property>
-                                            <!-- NIK reports 25.0.1+1 where Maven says 25.0.1. -->
+                                            <!-- NIK reports 25.0.4+1 where Maven says 25.0.4. -->
                                             <regex>\Q${javafx.version}\E(\+.*)?</regex>
                                             <regexMessage>JAVA_HOME's LibericaFX is ${nik.javafx.version} but javafx.version is ${javafx.version}; compiling against one JavaFX and imaging another</regexMessage>
                                         </requireProperty>

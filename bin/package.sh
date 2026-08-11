@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-JFX_VERSION=25.0.1
+JFX_VERSION=25.0.4
 MODULE=com.kodewerk.diskinventory
 MAIN_CLASS=com.kodewerk.diskinventory.ui.Main
 
