@@ -32,9 +32,67 @@ jobs:
           path: target/dist/*
           if-no-files-found: error
 
+  native-linux:
+    runs-on: ubuntu-latest
+    # 22.04 keeps the binary's glibc floor at 2.35, so Ubuntu 22.04 and
+    # Debian 12 can run it. The .deb job above deliberately stays on the
+    # runner's own image; the two floors are independent.
+    container: ubuntu:22.04
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential zlib1g-dev curl git ca-certificates \
+            libgtk-3-dev libpango1.0-dev libxtst-dev libgl-dev libasound2-dev
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v6
+        with:
+          distribution: liberica-nik
+          java-version: '25'
+          java-package: jdk+fx
+      - name: Build native image
+        run: ./mvnw -B -Pnative -DskipTests package
+      - name: Smoke test
+        run: ./target/diskinventory --scan .
+      - name: Tarball
+        run: |
+          VERSION=$(./mvnw -q help:evaluate -Dexpression=project.version -DforceStdout | sed 's/-SNAPSHOT//')
+          mkdir -p target/dist
+          tar czf "target/dist/diskinventory-$VERSION-linux-x64.tar.gz" -C target diskinventory
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiskInventory-native-linux-x64
+          path: target/dist/*
+          if-no-files-found: error
+
+  native-macos:
+    runs-on: macos-14        # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v6
+        with:
+          distribution: liberica-nik
+          java-version: '25'
+          java-package: jdk+fx
+      - name: Build native image
+        run: ./mvnw -B -Pnative -DskipTests package
+      - name: Smoke test
+        run: ./target/diskinventory --scan .
+      - name: Tarball
+        run: |
+          VERSION=$(./mvnw -q help:evaluate -Dexpression=project.version -DforceStdout | sed 's/-SNAPSHOT//')
+          mkdir -p target/dist
+          tar czf "target/dist/diskinventory-$VERSION-osx-aarch64.tar.gz" -C target diskinventory
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiskInventory-native-osx-aarch64
+          path: target/dist/*
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: package
+    needs: [package, native-linux, native-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

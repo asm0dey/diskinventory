@@ -71,6 +71,31 @@ Intel macOS and Windows builds are not maintained — PRs welcome. The
 machinery is close: `bin/package.sh` handles osx-x64 already, and
 `jpackage --type msi` under git-bash built successfully as of v1.0.0.
 
+## Native executable
+
+A single ahead-of-time compiled binary, built with
+[Liberica NIK Full](https://bell-sw.com/liberica-native-image-kit/) 25, which
+bundles JavaFX. Starts in milliseconds and carries no runtime directory.
+
+Download `diskinventory-<version>-linux-x64.tar.gz` or
+`-osx-aarch64.tar.gz` from the releases page, unpack, run.
+
+- **Linux:** needs glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+) and the usual
+  desktop GTK3 stack, which stays dynamically linked.
+- **macOS:** the binary is unsigned, so Gatekeeper quarantines it after
+  download. Clear it with `xattr -d com.apple.quarantine ./diskinventory`. The
+  `.dmg` is unsigned too — this is not specific to the native build.
+
+Build it yourself with NIK Full as `JAVA_HOME`:
+
+```
+JAVA_HOME=/path/to/liberica-nik-full-25 ./mvnw -Pnative -DskipTests package
+./target/diskinventory --scan .
+```
+
+The `.deb` and `.dmg` installers built by `bin/package.sh` are unaffected and
+remain the recommended install for most people.
+
 ### Regenerating native-image metadata
 
 Needed only if reflection, resources, or FFM usage changes. Requires NIK Full
