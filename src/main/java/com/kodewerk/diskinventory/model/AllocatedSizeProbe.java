@@ -57,7 +57,10 @@ final class AllocatedSizeProbe implements AutoCloseable {
             MethodHandle handle = linker.downcallHandle(symbol,
                     FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
             return new AllocatedSizeProbe(Arena.ofConfined(), handle, offset);
-        } catch (RuntimeException e) {
+        } catch (Throwable t) {
+            // Native images throw MissingForeignRegistrationError (an Error, not a
+            // RuntimeException) when the lstat downcall stub wasn't registered at
+            // build time, so this must catch Throwable to degrade instead of crashing.
             return null;
         }
     }
