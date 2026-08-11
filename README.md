@@ -83,9 +83,9 @@ NIK=~/.sdkman/candidates/java/25.0.4.fx-nik
 CP="target/classes:$(cat target/cp.txt)"
 OUT=src/main/resources/META-INF/native-image/com.kodewerk/diskinventory
 
-$NIK/bin/java -agentlib:native-image-agent=config-output-dir=$OUT -cp "$CP" \
+$NIK/bin/java -agentlib:native-image-agent=config-output-dir=$OUT --enable-native-access=ALL-UNNAMED,javafx.graphics -cp "$CP" \
     com.kodewerk.diskinventory.ui.Main            # click through every screen, then quit
-$NIK/bin/java -agentlib:native-image-agent=config-merge-dir=$OUT -cp "$CP" \
+$NIK/bin/java -agentlib:native-image-agent=config-merge-dir=$OUT --enable-native-access=ALL-UNNAMED,javafx.graphics -cp "$CP" \
     com.kodewerk.diskinventory.ui.Main --scan .
 ```
 

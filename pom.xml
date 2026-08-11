@@ -142,7 +142,7 @@
                             </metadataRepository>
                             <buildArgs>
                                 <!-- ForeignAPISupport is on by default in NIK 25; only the permission is needed. -->
-                                <buildArg>-H:EnableNativeAccess=ALL-UNNAMED</buildArg>
+                                <buildArg>-H:EnableNativeAccess=ALL-UNNAMED,javafx.graphics</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>
