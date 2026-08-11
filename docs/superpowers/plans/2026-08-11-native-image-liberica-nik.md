@@ -16,7 +16,7 @@
 - `javafx.version` in `pom.xml` is `25.0.4`; NIK reports `25.0.4+1` in `$NIK/lib/javafx.properties`. Comparisons are prefix matches, never string equality.
 - Never build with `--static` or musl. `Linker.defaultLookup()` is unsupported in static executables and `AllocatedSizeProbe` depends on it.
 - Reachability metadata lives in `src/main/resources/META-INF/native-image/com.kodewerk/diskinventory/`.
-- `-H:±ForeignAPISupport` is enabled by default in NIK 25.0.4; do not pass it. Native access is granted with `-H:EnableNativeAccess=ALL-UNNAMED`.
+- `-H:±ForeignAPISupport` is enabled by default in NIK 25.0.4; do not pass it. Native access is granted with `-H:EnableNativeAccess=ALL-UNNAMED,javafx.graphics` — JavaFX is a named module inside the image and loads its own libraries via `System::load`.
 - Platform names in artifact filenames match `bin/package.sh`: `linux-x64`, `osx-aarch64`.
 - The Linux native job builds inside `container: ubuntu:22.04` (glibc 2.35 floor). The existing `.deb`/`.dmg` jobs are untouched.
 - Native CI runs on tags only. No push/PR builds, no xvfb, no UI self-test mode.
@@ -408,7 +408,7 @@ In `pom.xml`, after the closing `</build>` tag and before `</project>`, add:
                             </metadataRepository>
                             <buildArgs>
                                 <!-- ForeignAPISupport is on by default in NIK 25; only the permission is needed. -->
-                                <buildArg>-H:EnableNativeAccess=ALL-UNNAMED</buildArg>
+                                <buildArg>-H:EnableNativeAccess=ALL-UNNAMED,javafx.graphics</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>

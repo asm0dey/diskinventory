@@ -93,13 +93,16 @@ bound to `package`, active only under `-Pnative` so `mvn test` and
 <mainClass>com.kodewerk.diskinventory.ui.Main</mainClass>
 <metadataRepository><enabled>true</enabled></metadataRepository>
 <buildArgs>
-  <buildArg>-H:EnableNativeAccess=ALL-UNNAMED</buildArg>
+  <buildArg>-H:EnableNativeAccess=ALL-UNNAMED,javafx.graphics</buildArg>
   <!-- --gc=parallel, or no GC flag at all; decided by measurement, ADR 006 -->
 </buildArgs>
 ```
 
 `-H:±ForeignAPISupport` is already default-enabled in NIK 25.0.4, so no FFM
-flag is passed.
+flag is passed. `javafx.graphics` has to be named alongside `ALL-UNNAMED`:
+JavaFX stays a named module inside the image and loads its own libraries
+through `System::load`, which a future release blocks outright rather than
+warning about.
 
 The profile also asserts the JavaFX coupling described in ADR 002:
 `properties-maven-plugin:read-project-properties` reads
