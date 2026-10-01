@@ -99,7 +99,9 @@ public class DiskInventoryApp extends Application {
     private TreeView<Path> dirTree;
     private boolean syncingTree;
 
-    private Task<ScanResult> currentTask;
+    private Task<?> currentTask;
+    /** Whether a click may cancel the running task to scan elsewhere: only a plain scan, nothing else loses work. */
+    private boolean pivotable;
     private ScanResult result;
     private volatile Path scanningDir;
     private Path pivotTarget;
@@ -538,7 +540,62 @@ public class DiskInventoryApp extends Application {
             offerPermanent(sorted, "No Trash is available on this system.");
             return;
         }
-        Freed freed = permanent ? model.freedOnDisk(result, targets) : null;
+        if (permanent) {
+            measureFreed(targets, freed -> confirmDelete(sorted, true, freed));
+        } else {
+            confirmDelete(sorted, false, null);
+        }
+    }
+
+    /**
+     * Works out what deleting {@code targets} frees on a background thread — it
+     * stats every shared inode, which is slow for a pnpm store — then hands it
+     * to {@code then} on the FX thread. Counts as the one running operation.
+     */
+    private void measureFreed(Set<Path> targets, Consumer<Freed> then) {
+        ScanResult at = result;
+        Task<Freed> task = new Task<>() {
+            @Override
+            protected Freed call() {
+                return model.freedOnDisk(at, targets);
+            }
+        };
+        currentTask = task;
+        pivotable = false;
+        String statusBefore = status.getText();
+        boolean upDisabled = upButton.isDisable();
+        upButton.setDisable(true);
+        rescanButton.setDisable(true);
+        showScanActivity(true);
+        analyzeButton.setVisible(false);
+        analyzeButton.setManaged(false);
+        status.setText("Working out what the delete frees…");
+        // Never cancelled; runs before the dialog, so the delete that follows can start.
+        Runnable finished = () -> {
+            currentTask = null;
+            upButton.setDisable(upDisabled);
+            rescanButton.setDisable(false);
+            showScanActivity(false);
+            status.setText(statusBefore);
+        };
+        task.setOnSucceeded(e -> {
+            finished.run();
+            then.accept(task.getValue());
+        });
+        task.setOnFailed(e -> {
+            finished.run();
+            status.setText("Could not work out what the delete frees: " + task.getException().getMessage());
+        });
+        Thread thread = new Thread(task, "freed-on-disk");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /** The confirmation dialog, then the delete. {@code freed} is null for the Trash. */
+    private void confirmDelete(List<Path> sorted, boolean permanent, Freed freed) {
+        if (busy()) {
+            return;
+        }
         FileEntry file = sorted.size() == 1 ? fileAt(sorted.getFirst()) : null;
         List<Path> links = file != null && file.shared() ? result.inodes().linksOf(file.fileKey()) : List.of();
 
@@ -692,8 +749,8 @@ public class DiskInventoryApp extends Application {
                 ScanResult r = before;
                 for (Path t : toRescan) {
                     try {
-                        r = model.rescan(r, t, progressReporter(this::updateMessage));
-                    } catch (IOException e) {
+                        r = model.rescan(r, rescanTarget(r.root(), t), progressReporter(this::updateMessage));
+                    } catch (IOException | RuntimeException e) {
                         rescanErrors.add(t + ": " + e.getMessage());
                     }
                 }
@@ -798,6 +855,19 @@ public class DiskInventoryApp extends Application {
             nodes.add(node);
         }
         return nodes;
+    }
+
+    /**
+     * What to rescan so {@code p} is re-read: {@code p} itself when its parent
+     * is a directory in the tree, else its highest ancestor that is missing
+     * from the tree (whose parent is). E.g. a Trash dir created since the scan.
+     */
+    static Path rescanTarget(DirectoryNode scanRoot, Path p) {
+        Path deepest = trailTo(scanRoot, p).getLast().path();
+        if (deepest.equals(p) || !p.startsWith(scanRoot.path())) {
+            return p;
+        }
+        return deepest.resolve(deepest.relativize(p).getName(0));
     }
 
     private void updateLargestFiles() {

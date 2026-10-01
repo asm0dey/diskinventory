@@ -33,6 +33,20 @@ class DiskInventoryAppTest {
     }
 
     @Test
+    void rescanTargetIsTheHighestMissingPathBelowTheNearestAncestorInTheTree(@TempDir Path root)
+            throws IOException {
+        Files.createDirectories(root.resolve("a/b"));
+        DirectoryNode tree = new DiskUsageModel().scan(root).root();
+
+        assertEquals(root.resolve("a/b"), DiskInventoryApp.rescanTarget(tree, root.resolve("a/b")));
+        assertEquals(root.resolve("a/f"), DiskInventoryApp.rescanTarget(tree, root.resolve("a/f")));
+        assertEquals(root.resolve("new"),
+                DiskInventoryApp.rescanTarget(tree, root.resolve("new/share/Trash/files")));
+        assertEquals(root.resolve("a/b/c"), DiskInventoryApp.rescanTarget(tree, root.resolve("a/b/c/d")));
+        assertEquals(root, DiskInventoryApp.rescanTarget(tree, root));
+    }
+
+    @Test
     void onlyPathsStrictlyUnderTheScanRootAreDeletable() {
         Path root = Path.of("/scan/root");
         assertTrue(DiskInventoryApp.deletable(root, root.resolve("a/f")));
