@@ -521,8 +521,12 @@ public class DiskInventoryApp extends Application {
         return p.startsWith(scanRoot) && !p.equals(scanRoot);
     }
 
+    /**
+     * Not {@code isRunning()}: that turns true only once the task's SCHEDULED
+     * event is processed, so input already queued behind runTask would slip in.
+     */
     private boolean busy() {
-        return currentTask != null && currentTask.isRunning();
+        return currentTask != null && !currentTask.isDone();
     }
 
     /**
