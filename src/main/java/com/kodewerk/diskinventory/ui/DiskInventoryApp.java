@@ -11,16 +11,19 @@ import com.kodewerk.diskinventory.model.Sizes;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
+import javafx.concurrent.WorkerStateEvent;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.chart.PieChart;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
@@ -28,6 +31,8 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -125,8 +130,19 @@ public class DiskInventoryApp extends Application {
         upButton.setOnAction(e -> up());
 
         rescanButton = new Button("↻");
-        rescanButton.setTooltip(new Tooltip("Rescan from the current root"));
-        rescanButton.setOnAction(e -> scan());
+        rescanButton.setTooltip(new Tooltip(
+                "Rescan the current directory (Shift-click: rescan everything from the scan root)"));
+        // A mouse handler, not onAction: ActionEvent does not carry the Shift state.
+        rescanButton.setOnMouseClicked(e -> {
+            if (e.getButton() != MouseButton.PRIMARY) {
+                return;
+            }
+            if (e.isShiftDown() || trail.isEmpty()) {
+                scan();
+            } else {
+                rescan(current().path());
+            }
+        });
 
         for (Button b : List.of(upButton, rescanButton)) {
             b.getStyleClass().add("tool-icon");
@@ -233,7 +249,7 @@ public class DiskInventoryApp extends Application {
         if (top.root().path().equals(target) || !top.root().path().startsWith(target)) {
             return;
         }
-        runScan(new Task<>() {
+        runTask(new Task<>() {
             @Override
             protected ScanResult call() throws Exception {
                 ScanResult node = top;
@@ -242,7 +258,7 @@ public class DiskInventoryApp extends Application {
                 }
                 return node;
             }
-        });
+        }, false);
     }
 
     private HBox buildStatusRow() {
@@ -321,17 +337,32 @@ public class DiskInventoryApp extends Application {
         dirTree.getRoot().setExpanded(true);
         dirTree.getStyleClass().add("dir-tree");
         dirTree.setPrefWidth(260);
-        dirTree.setCellFactory(tv -> new TreeCell<>() {
-            @Override
-            protected void updateItem(Path path, boolean empty) {
-                super.updateItem(path, empty);
-                if (empty || path == null) {
-                    setText(null);
-                } else {
-                    Path name = path.getFileName();
-                    setText(name != null ? name.toString() : path.toString());
+        dirTree.setCellFactory(tv -> {
+            TreeCell<Path> cell = new TreeCell<>() {
+                @Override
+                protected void updateItem(Path path, boolean empty) {
+                    super.updateItem(path, empty);
+                    if (empty || path == null) {
+                        setText(null);
+                    } else {
+                        Path name = path.getFileName();
+                        setText(name != null ? name.toString() : path.toString());
+                    }
                 }
-            }
+            };
+            // Right-click must not select (selecting focuses, or even scans, the directory).
+            cell.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
+                if (e.getButton() == MouseButton.SECONDARY) {
+                    e.consume();
+                }
+            });
+            cell.setOnContextMenuRequested(e -> {
+                if (cell.getItem() != null) {
+                    showMenu(pathMenu(cell.getItem(), true), cell, e.getScreenX(), e.getScreenY());
+                }
+                e.consume();
+            });
+            return cell;
         });
         dirTree.getSelectionModel().selectedItemProperty().addListener((obs, old, item) -> {
             if (!syncingTree && item != null) {
@@ -349,26 +380,13 @@ public class DiskInventoryApp extends Application {
         }
         syncingTree = true;
         try {
-            TreeItem<Path> item = dirTree.getRoot();
-            if (!target.startsWith(item.getValue())) {
-                return;
+            TreeItem<Path> item = findTreeItem(target);
+            if (item == null) {
+                return;     // branch not listable; leave the tree as it is
             }
-            Path rel = item.getValue().relativize(target);
-            if (!rel.toString().isEmpty()) {
-                outer:
-                for (Path name : rel) {
-                    item.setExpanded(true);
-                    for (TreeItem<Path> child : item.getChildren()) {
-                        Path childName = child.getValue().getFileName();
-                        if (childName != null && childName.toString().equals(name.toString())) {
-                            item = child;
-                            continue outer;
-                        }
-                    }
-                    return;     // branch not listable; leave the tree as it is
-                }
+            for (TreeItem<Path> i = item; i != null; i = i.getParent()) {
+                i.setExpanded(true);
             }
-            item.setExpanded(true);
             dirTree.getSelectionModel().select(item);
             int row = dirTree.getRow(item);
             if (row >= 0) {
@@ -376,6 +394,68 @@ public class DiskInventoryApp extends Application {
             }
         } finally {
             syncingTree = false;
+        }
+    }
+
+    /** The tree item for {@code target}, listing directories on the way; null if not listable. */
+    private TreeItem<Path> findTreeItem(Path target) {
+        TreeItem<Path> item = dirTree.getRoot();
+        if (!target.startsWith(item.getValue())) {
+            return null;
+        }
+        outer:
+        for (Path name : item.getValue().relativize(target)) {
+            if (name.toString().isEmpty()) {
+                break;      // target is the tree root
+            }
+            for (TreeItem<Path> child : item.getChildren()) {
+                Path childName = child.getValue().getFileName();
+                if (childName != null && childName.toString().equals(name.toString())) {
+                    item = child;
+                    continue outer;
+                }
+            }
+            return null;
+        }
+        return item;
+    }
+
+    /** Re-lists {@code dir}'s subdirectories in the tree after the disk changed under it. */
+    private void reloadTreeItem(Path dir) {
+        if (dir == null) {
+            return;
+        }
+        syncingTree = true;
+        try {
+            if (findTreeItem(dir) instanceof LazyDirectoryItem item) {
+                item.reload();
+            }
+        } finally {
+            syncingTree = false;
+        }
+        if (!trail.isEmpty()) {
+            revealInTree(current().path());
+        }
+    }
+
+    /** Right-click menu for a directory or file in the scanned tree. */
+    private ContextMenu pathMenu(Path p, boolean isDirectory) {
+        ContextMenu menu = new ContextMenu();
+        if (result != null && p.startsWith(result.root().path())) {
+            MenuItem rescan = new MenuItem("Rescan");
+            rescan.setOnAction(e -> rescan(p));
+            menu.getItems().add(rescan);
+        }
+        menu.setOnShowing(e -> {
+            boolean busy = currentTask != null && currentTask.isRunning();
+            menu.getItems().forEach(item -> item.setDisable(busy));
+        });
+        return menu;
+    }
+
+    private static void showMenu(ContextMenu menu, Node anchor, double screenX, double screenY) {
+        if (!menu.getItems().isEmpty()) {
+            menu.show(anchor, screenX, screenY);
         }
     }
 
@@ -395,33 +475,41 @@ public class DiskInventoryApp extends Application {
         if (target.equals(current().path())) {
             return;
         }
-        DirectoryNode scanRoot = trail.getFirst();
-        if (target.startsWith(scanRoot.path())) {
-            List<DirectoryNode> newTrail = new ArrayList<>();
-            newTrail.add(scanRoot);
-            DirectoryNode node = scanRoot;
-            boolean resolved = true;
-            Path rel = scanRoot.path().relativize(target);
-            if (!rel.toString().isEmpty()) {
-                for (Path name : rel) {
-                    var child = node.child(name.toString());
-                    if (child.isEmpty()) {
-                        resolved = false;
-                        break;
-                    }
-                    node = child.get();
-                    newTrail.add(node);
-                }
-            }
-            if (resolved) {
-                trail.clear();
-                trail.addAll(newTrail);
-                render();
-                return;
-            }
+        List<DirectoryNode> newTrail = trailTo(trail.getFirst(), target);
+        if (newTrail.getLast().path().equals(target)) {
+            trail.clear();
+            trail.addAll(newTrail);
+            render();
+            return;
         }
         root = target;
         scan();
+    }
+
+    /**
+     * The nodes from {@code scanRoot} down towards {@code target}, stopping at
+     * the deepest one that exists in the tree: {@code target}'s nearest
+     * existing ancestor, or just {@code scanRoot} when target is outside it.
+     */
+    static List<DirectoryNode> trailTo(DirectoryNode scanRoot, Path target) {
+        List<DirectoryNode> nodes = new ArrayList<>();
+        nodes.add(scanRoot);
+        if (!target.startsWith(scanRoot.path())) {
+            return nodes;
+        }
+        DirectoryNode node = scanRoot;
+        for (Path name : scanRoot.path().relativize(target)) {
+            if (name.toString().isEmpty()) {
+                break;      // target is the scan root
+            }
+            var child = node.child(name.toString());
+            if (child.isEmpty()) {
+                break;
+            }
+            node = child.get();
+            nodes.add(node);
+        }
+        return nodes;
     }
 
     private void updateLargestFiles() {
@@ -453,22 +541,39 @@ public class DiskInventoryApp extends Application {
         if (top.root().path().getParent() == null) {
             return;
         }
-        runScan(new Task<>() {
+        runTask(new Task<>() {
             @Override
             protected ScanResult call() throws Exception {
                 return model.scanParent(top, progressReporter(this::updateMessage));
             }
-        });
+        }, false);
     }
 
     private void scan() {
         Path target = root;
-        runScan(new Task<>() {
+        runTask(new Task<>() {
             @Override
             protected ScanResult call() throws Exception {
                 return model.scan(target, progressReporter(this::updateMessage));
             }
-        });
+        }, false);
+    }
+
+    /**
+     * Re-reads {@code p} (a directory or file under the scan root) and stays
+     * on the current directory, or its nearest ancestor if it is gone.
+     * Rescanning the scan root is a full scan.
+     */
+    private void rescan(Path p) {
+        ScanResult before = result;
+        Task<ScanResult> task = new Task<>() {
+            @Override
+            protected ScanResult call() throws Exception {
+                return model.rescan(before, p, progressReporter(this::updateMessage));
+            }
+        };
+        task.addEventHandler(WorkerStateEvent.WORKER_STATE_SUCCEEDED, e -> reloadTreeItem(p.getParent()));
+        runTask(task, true);
     }
 
     /** Stops the running scan and re-roots the analysis at its current position. */
@@ -489,7 +594,12 @@ public class DiskInventoryApp extends Application {
         };
     }
 
-    private void runScan(Task<ScanResult> task) {
+    /**
+     * Runs a tree-producing task, one at a time. {@code keepTrail} keeps the
+     * view on the current directory (or its nearest surviving ancestor);
+     * otherwise the view starts at the new scan root.
+     */
+    private void runTask(Task<ScanResult> task, boolean keepTrail) {
         currentTask = task;
         pivotTarget = null;
         scanningDir = null;
@@ -501,11 +611,12 @@ public class DiskInventoryApp extends Application {
         status.textProperty().bind(task.messageProperty());
         task.setOnSucceeded(e -> {
             scanFinished();
+            Path at = keepTrail && !trail.isEmpty() ? current().path() : null;
             result = task.getValue();
             root = result.root().path();
             stage.setTitle("Disk Inventory — " + root);
             trail.clear();
-            trail.add(result.root());
+            trail.addAll(at != null ? trailTo(result.root(), at) : List.of(result.root()));
             render();
             refreshDf();
         });
@@ -620,7 +731,12 @@ public class DiskInventoryApp extends Application {
                             .append(child.name()).append("  ").append(Sizes.human(size));
                 }
             } else {
-                addSlice(sliceLabel(child.name(), size, total), size, child, null);
+                String label = sliceLabel(child.name(), size, total);
+                long shared = result.sharedBytes(child.path(), mode);
+                String tip = shared > 0
+                        ? label + "\n" + Sizes.human(shared) + " shared with other directories"
+                        : null;
+                addSlice(label, size, child, tip);
             }
         }
         if (node.directFileSize(mode) > 0) {
@@ -693,8 +809,14 @@ public class DiskInventoryApp extends Application {
         if (target != null) {
             sliceNode.setStyle("-fx-cursor: hand;");
             sliceNode.setOnMouseClicked(e -> {
-                trail.add(target);
-                render();
+                if (e.getButton() == MouseButton.PRIMARY) {
+                    trail.add(target);
+                    render();
+                }
+            });
+            sliceNode.setOnContextMenuRequested(e -> {
+                showMenu(pathMenu(target.path(), true), sliceNode, e.getScreenX(), e.getScreenY());
+                e.consume();
             });
         }
     }
