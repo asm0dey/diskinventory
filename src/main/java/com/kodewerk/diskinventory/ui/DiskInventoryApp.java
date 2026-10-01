@@ -1095,12 +1095,7 @@ public class DiskInventoryApp extends Application {
                             .append(child.name()).append("  ").append(Sizes.human(size));
                 }
             } else {
-                String label = sliceLabel(child.name(), size, total);
-                long shared = result.sharedBytes(child.path(), mode);
-                String tip = shared > 0
-                        ? label + "\n" + Sizes.human(shared) + " shared with other directories"
-                        : null;
-                addSlice(label, size, child, tip);
+                addSlice(sliceLabel(child.name(), size, total), size, child, null);
             }
         }
         if (node.directFileSize(mode) > 0) {
@@ -1171,6 +1166,13 @@ public class DiskInventoryApp extends Application {
         tooltip.setStyle("-fx-font-family: monospace;");
         Tooltip.install(sliceNode, tooltip);
         if (target != null) {
+            // On hover, not per render: sharedBytes goes over every shared inode in the tree.
+            tooltip.setOnShowing(e -> {
+                long shared = result.sharedBytes(target.path(), mode);
+                tooltip.setText(shared > 0
+                        ? tooltipText + "\n" + Sizes.human(shared) + " shared with other directories"
+                        : tooltipText);
+            });
             sliceNode.setStyle("-fx-cursor: hand;");
             sliceNode.setOnMouseClicked(e -> {
                 if (isPlainPrimaryClick(e)) {
