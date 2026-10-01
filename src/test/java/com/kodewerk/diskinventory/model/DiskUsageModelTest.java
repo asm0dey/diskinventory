@@ -6,7 +6,9 @@ import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Comparator;
@@ -17,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -388,5 +391,17 @@ class DiskUsageModelTest {
         } finally {
             Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("rwx------"));
         }
+    }
+
+    @Test
+    void rescanWalkThatFindsThePathGoneYieldsNoNode(@TempDir Path root) {
+        // p vanishing between rescan's readAttributes and its walk: the walk's first callback.
+        DiskUsageModel.Visitor gone = new DiskUsageModel.Visitor((d, n, b) -> { }, null, null, new InodeIndex());
+        gone.visitFileFailed(root.resolve("p"), new NoSuchFileException(root.resolve("p").toString()));
+        assertNull(gone.result());
+
+        DiskUsageModel.Visitor denied = new DiskUsageModel.Visitor((d, n, b) -> { }, null, null, new InodeIndex());
+        denied.visitFileFailed(root.resolve("p"), new AccessDeniedException(root.resolve("p").toString()));
+        assertEquals(1, denied.result().errorCount());
     }
 }

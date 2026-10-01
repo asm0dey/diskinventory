@@ -271,7 +271,7 @@ public final class DiskUsageModel {
     }
 
     /** {@code unix:nlink} view, falling back to 1 when unsupported or unreadable (e.g. the path is gone). */
-    private static long readNlinkFallback(Path path) {
+    static long readNlinkFallback(Path path) {
         try {
             return ((Number) Files.getAttribute(path, "unix:nlink", NOFOLLOW_LINKS)).longValue();
         } catch (UnsupportedOperationException | IOException e) {
@@ -311,7 +311,7 @@ public final class DiskUsageModel {
         }
     }
 
-    private static final class Visitor extends SimpleFileVisitor<Path> {
+    static final class Visitor extends SimpleFileVisitor<Path> {
         private final ScanListener listener;
         private final DirectoryNode graft;
         private final AllocatedSizeProbe probe;
@@ -392,9 +392,11 @@ public final class DiskUsageModel {
         @Override
         public FileVisitResult visitFileFailed(Path file, IOException exc) {
             // An unreadable subdirectory arrives here instead of preVisitDirectory;
-            // so does an unreadable rescan path, which then becomes an empty node.
+            // so does an unreadable rescan path, which then becomes an empty node,
+            // or a rescan path gone since rescan read its attributes: no node.
             if (stack.isEmpty()) {
-                result = new DirectoryNode(file, 0, 0, 0, 0, List.of(), List.of(), 1);
+                result = exc instanceof NoSuchFileException ? null
+                        : new DirectoryNode(file, 0, 0, 0, 0, List.of(), List.of(), 1);
             } else {
                 stack.peek().errorCount++;
             }

@@ -94,8 +94,10 @@ public final class DirectoryNode {
      * are dropped); {@code otherLinks} is left empty here since a {@link
      * DirectoryNode} has no index to resolve them — see {@link
      * ScanResult#largestFiles}. Bounded min-heap over unshared files,
-     * O(files · log limit); shared files are deduped by fileKey first (there
-     * are normally few of them) and fed into the same heap at the end.
+     * O(files · log limit); shared files are deduped by fileKey first and fed
+     * into the same heap at the end. A shared file smaller than everything in
+     * a full heap can never make the cut, so it is skipped before the dedup
+     * (pnpm/Nix homes have many small shared files).
      */
     public List<FileRef> largestFiles(int limit, SizeMode mode) {
         if (limit <= 0) {
@@ -103,18 +105,27 @@ public final class DirectoryNode {
         }
         PriorityQueue<FileRef> heap = new PriorityQueue<>(
                 Comparator.comparingLong(r -> r.file().size(mode)));
-        Map<Object, FileRef> sharedBest = new HashMap<>();
+        // Best link so far per shared file, with its resolved path so each link resolves once.
+        record Best(Path path, FileRef ref) {
+        }
+        Map<Object, Best> sharedBest = new HashMap<>();
         Deque<DirectoryNode> pending = new ArrayDeque<>();
         pending.push(this);
         while (!pending.isEmpty()) {
             DirectoryNode node = pending.pop();
             for (FileEntry file : node.files) {
-                FileRef ref = new FileRef(node.path, file, List.of());
                 if (file.shared()) {
-                    sharedBest.merge(file.fileKey(), ref,
-                            (a, b) -> a.path().compareTo(b.path()) <= 0 ? a : b);
+                    // The heap's minimum only grows once full, so a skipped file stays out.
+                    if (heap.size() == limit && file.size(mode) < heap.peek().file().size(mode)) {
+                        continue;
+                    }
+                    Best best = sharedBest.get(file.fileKey());
+                    Path path = node.path.resolve(file.name());
+                    if (best == null || path.compareTo(best.path()) < 0) {
+                        sharedBest.put(file.fileKey(), new Best(path, new FileRef(node.path, file, List.of())));
+                    }
                 } else {
-                    heap.add(ref);
+                    heap.add(new FileRef(node.path, file, List.of()));
                     if (heap.size() > limit) {
                         heap.poll();
                     }
@@ -122,8 +133,8 @@ public final class DirectoryNode {
             }
             node.children.forEach(pending::push);
         }
-        for (FileRef ref : sharedBest.values()) {
-            heap.add(ref);
+        for (Best best : sharedBest.values()) {
+            heap.add(best.ref());
             if (heap.size() > limit) {
                 heap.poll();
             }

@@ -33,4 +33,18 @@ class AllocatedSizeProbeTest {
             assertEquals(new AllocatedSizeProbe.Stat(77, 1), probe.stat(dir.resolve("missing"), 77));
         }
     }
+
+    @Test
+    @EnabledOnOs({OS.MAC, OS.LINUX})
+    void unknownNlinkLayoutStillReadsAllocatedAndFallsBackForNlink(@TempDir Path dir) throws IOException {
+        Path a = Files.write(dir.resolve("a"), new byte[10]);
+        Files.createLink(dir.resolve("b"), a);
+        try (AllocatedSizeProbe known = AllocatedSizeProbe.create();
+             AllocatedSizeProbe unknown = AllocatedSizeProbe.create(null)) {
+            assertNotNull(unknown);
+            assertEquals(known.stat(a, 0).allocated(), unknown.stat(a, 0).allocated());
+            assertEquals(2, unknown.stat(a, 0).nlink());
+            assertEquals(new AllocatedSizeProbe.Stat(77, 1), unknown.stat(dir.resolve("missing"), 77));
+        }
+    }
 }

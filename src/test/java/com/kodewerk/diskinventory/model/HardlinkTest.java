@@ -244,6 +244,26 @@ class HardlinkTest {
     }
 
     @Test
+    void largestFilesSkipsSmallSharedFilesButKeepsBigOnesUnderTheirSmallestLink(@TempDir Path root)
+            throws IOException {
+        for (int i = 0; i < 3; i++) {
+            write(root.resolve("u/big" + i), 1000);
+        }
+        write(root.resolve("z/small"), 10);
+        link(root.resolve("y/small"), root.resolve("z/small"));
+        write(root.resolve("x2/shared"), 2000);
+        link(root.resolve("x1/shared"), root.resolve("x2/shared"));
+        ScanResult r = model.scan(root);
+
+        List<FileRef> top = r.largestFiles(r.root(), 3, SizeMode.LOGICAL);
+
+        assertEquals(3, top.size());
+        assertEquals(root.resolve("x1/shared"), top.getFirst().path());
+        assertEquals(List.of(root.resolve("x2/shared")), top.getFirst().otherLinks());
+        assertTrue(top.stream().skip(1).allMatch(f -> f.file().size() == 1000), top.toString());
+    }
+
+    @Test
     void deleteAllLinksFreesTheFile(@TempDir Path root) throws IOException {
         write(root.resolve("a/f"), MIB);
         link(root.resolve("b/f"), root.resolve("a/f"));

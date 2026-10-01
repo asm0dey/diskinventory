@@ -37,6 +37,7 @@ final class AllocatedSizeProbe implements AutoCloseable {
     private final MemorySegment pathBuf;
     private final long blocksOffset;
     private final long nlinkOffset;
+    /** 0 when the st_nlink layout is unknown: nlink then comes from {@code unix:nlink}. */
     private final int nlinkWidthBytes;
 
     private AllocatedSizeProbe(Arena arena, MethodHandle lstat, long blocksOffset,
@@ -52,9 +53,17 @@ final class AllocatedSizeProbe implements AutoCloseable {
 
     /** Returns a probe for this platform, or null if unsupported. */
     static AllocatedSizeProbe create() {
+        return create(nlinkLayoutForOs());
+    }
+
+    /**
+     * A probe with the given {offset, widthBytes} of st_nlink, or null for an
+     * unknown layout: allocated sizes still come from lstat, nlink from the
+     * {@code unix:nlink} fallback.
+     */
+    static AllocatedSizeProbe create(long[] nlinkLayout) {
         long blocksOffset = blocksOffsetForOs();
-        long[] nlinkLayout = nlinkLayoutForOs();
-        if (blocksOffset < 0 || nlinkLayout == null) {
+        if (blocksOffset < 0) {
             return null;
         }
         try {
@@ -68,8 +77,10 @@ final class AllocatedSizeProbe implements AutoCloseable {
                     .orElseThrow();
             MethodHandle handle = linker.downcallHandle(symbol,
                     FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
-            return new AllocatedSizeProbe(Arena.ofConfined(), handle, blocksOffset,
-                    nlinkLayout[0], (int) nlinkLayout[1]);
+            return nlinkLayout == null
+                    ? new AllocatedSizeProbe(Arena.ofConfined(), handle, blocksOffset, -1, 0)
+                    : new AllocatedSizeProbe(Arena.ofConfined(), handle, blocksOffset,
+                            nlinkLayout[0], (int) nlinkLayout[1]);
         } catch (Throwable t) {
             // Native images throw MissingForeignRegistrationError (an Error, not a
             // RuntimeException) when the lstat downcall stub wasn't registered at
@@ -103,7 +114,7 @@ final class AllocatedSizeProbe implements AutoCloseable {
             if (arch.contains("amd64") || arch.contains("x86_64")) {
                 return new long[]{16, 8};   // linux x86_64: st_nlink @16, u64
             }
-            return null;    // unknown arch - layout not known
+            return null;    // unknown arch: st_nlink layout not known, use the unix:nlink fallback
         }
         return null;
     }
@@ -122,6 +133,7 @@ final class AllocatedSizeProbe implements AutoCloseable {
             }
             long allocated = statBuf.get(JAVA_LONG, blocksOffset) * DEV_BSIZE;
             long nlink = switch (nlinkWidthBytes) {
+                case 0 -> DiskUsageModel.readNlinkFallback(path);
                 case 2 -> statBuf.get(JAVA_SHORT, nlinkOffset) & 0xFFFF;
                 case 4 -> statBuf.get(JAVA_INT, nlinkOffset) & 0xFFFFFFFFL;
                 default -> statBuf.get(JAVA_LONG, nlinkOffset);
