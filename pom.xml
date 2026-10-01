@@ -15,7 +15,7 @@
     <properties>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <javafx.version>25.0.1</javafx.version>
+        <javafx.version>25.0.4</javafx.version>
         <junit.version>5.11.4</junit.version>
     </properties>
 
@@ -56,7 +56,7 @@
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>com.kodewerk.diskinventory.ui.DiskInventoryApp</mainClass>
+                    <mainClass>com.kodewerk.diskinventory.ui.Main</mainClass>
                     <options>
                         <option>--enable-native-access=com.kodewerk.diskinventory,javafx.graphics</option>
                     </options>
@@ -64,4 +64,99 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            Native image via Liberica NIK Full. Run with JAVA_HOME pointing at a
+            NIK Full install; JavaFX comes from NIK's own platform modules, not
+            from the Maven jars, which are shadowed on the classpath. The two
+            must agree, so the build asserts it rather than hoping.
+        -->
+        <profile>
+            <id>native</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>properties-maven-plugin</artifactId>
+                        <version>1.2.1</version>
+                        <executions>
+                            <execution>
+                                <id>read-nik-javafx-version</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>read-project-properties</goal>
+                                </goals>
+                                <configuration>
+                                    <!-- Absent on NIK Standard, which is exactly when this build must fail. -->
+                                    <files>
+                                        <file>${java.home}/lib/javafx.properties</file>
+                                    </files>
+                                    <keyPrefix>nik.</keyPrefix>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <version>3.6.3</version>
+                        <executions>
+                            <execution>
+                                <id>assert-javafx-matches-nik</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireProperty>
+                                            <property>nik.javafx.version</property>
+                                            <!-- NIK reports 25.0.4+1 where Maven says 25.0.4. -->
+                                            <regex>\Q${javafx.version}\E(\+.*)?</regex>
+                                            <regexMessage>JAVA_HOME's LibericaFX is ${nik.javafx.version} but javafx.version is ${javafx.version}; compiling against one JavaFX and imaging another</regexMessage>
+                                        </requireProperty>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <version>0.10.6</version>
+                        <executions>
+                            <execution>
+                                <id>build-native</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>compile-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <imageName>diskinventory</imageName>
+                            <mainClass>com.kodewerk.diskinventory.ui.Main</mainClass>
+                            <metadataRepository>
+                                <enabled>true</enabled>
+                            </metadataRepository>
+                            <buildArgs>
+                                <!-- ForeignAPISupport is on by default in NIK 25; only the permission is needed. -->
+                                <buildArg>-H:EnableNativeAccess=ALL-UNNAMED,javafx.graphics</buildArg>
+                                <!-- Re-measured 2026-08-11 on /home/finkel (~741 GiB, far more nodes than /usr),
+                                     5 rounds interleaved (serial, parallel, serial, ...) after a discarded warm-up
+                                     scan so both binaries hit a warm page cache. Median of 5: serial 41.68s,
+                                     parallel 38.73s -- parallel 7.1% faster, above the 5% keep-the-flag bar.
+                                     (Best-of-5 alone was only 3.0% -- would not have cleared the bar; the
+                                     median is the number that decided this, not best-of. Supersedes the
+                                     earlier /usr best-of-3 measurement, which was confounded by cache warmup:
+                                     the runs weren't interleaved, so parallel benefited from a warmer cache.) -->
+                                <buildArg>--gc=parallel</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
