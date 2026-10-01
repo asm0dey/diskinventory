@@ -810,8 +810,8 @@ public class DiskInventoryApp extends Application {
             return;
         }
         if (busy()) {
-            if (deleteStop != null) {
-                return;     // a delete is never cancelled: its rescan must run
+            if (!pivotable) {
+                return;     // a rescan or delete would lose its work; a delete must rescan
             }
             pivotTarget = target;
             currentTask.cancel(true);
@@ -937,7 +937,7 @@ public class DiskInventoryApp extends Application {
     /** Stops the running scan and re-roots the analysis at its current position. */
     private void pivotToScanningDir() {
         Path target = scanningDir;
-        if (target == null || currentTask == null || !currentTask.isRunning()) {
+        if (target == null || !busy() || !pivotable) {
             return;
         }
         pivotTarget = target;
@@ -962,11 +962,15 @@ public class DiskInventoryApp extends Application {
             return;
         }
         currentTask = task;
+        pivotable = !keepTrail;
         pivotTarget = null;
         scanningDir = null;
         upButton.setDisable(true);
         rescanButton.setDisable(true);
         showScanActivity(true);
+        // "Analyze this path" would cancel a rescan or delete and lose the whole tree.
+        analyzeButton.setVisible(pivotable);
+        analyzeButton.setManaged(pivotable);
         chart.getData().clear();
 
         status.textProperty().bind(task.messageProperty());
@@ -983,7 +987,7 @@ public class DiskInventoryApp extends Application {
         });
         task.setOnFailed(e -> {
             scanFinished();
-            upButton.setDisable(false);
+            renderPrevious();
             status.setText("Scan failed: " + task.getException().getMessage());
         });
         task.setOnCancelled(e -> {
@@ -993,13 +997,22 @@ public class DiskInventoryApp extends Application {
                 pivotTarget = null;
                 scan();
             } else {
-                upButton.setDisable(false);
+                renderPrevious();
                 status.setText("Scan cancelled");
             }
         });
         Thread thread = new Thread(task, "disk-scan");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    /** After a failed or cancelled task: the previous result and trail are still valid, show them again. */
+    private void renderPrevious() {
+        if (result != null) {
+            render();
+        } else {
+            upButton.setDisable(false);
+        }
     }
 
     private void scanFinished() {
