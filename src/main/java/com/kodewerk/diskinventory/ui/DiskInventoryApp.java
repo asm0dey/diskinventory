@@ -357,7 +357,8 @@ public class DiskInventoryApp extends Application {
         });
         filesList.setOnKeyPressed(e -> {
             FileRef ref = filesList.getSelectionModel().getSelectedItem();
-            if (ref != null && e.getCode() == KeyCode.DELETE) {
+            // Mac keyboards' delete key sends BACK_SPACE.
+            if (ref != null && (e.getCode() == KeyCode.DELETE || e.getCode() == KeyCode.BACK_SPACE)) {
                 confirmAndDelete(Set.of(ref.path()), e.isShiftDown());
                 e.consume();
             }
@@ -655,6 +656,8 @@ public class DiskInventoryApp extends Application {
         List<Path> failed = new ArrayList<>();
         List<Path> untrashed = new ArrayList<>();
         AtomicReference<String> trashError = new AtomicReference<>();
+        AtomicBoolean stopped = new AtomicBoolean();
+        List<String> rescanErrors = new ArrayList<>();
         Task<ScanResult> task = new Task<>() {
             @Override
             protected ScanResult call() throws Exception {
@@ -665,6 +668,7 @@ public class DiskInventoryApp extends Application {
                         Deleter.Outcome outcome = Deleter.deletePermanently(t, stop::get);
                         failed.addAll(outcome.failed());
                         if (outcome.status() == Deleter.Status.STOPPED) {
+                            stopped.set(true);
                             break;
                         }
                     } else if (trashError.get() == null) {
@@ -680,13 +684,18 @@ public class DiskInventoryApp extends Application {
                         untrashed.add(t);
                     }
                 }
-                ScanResult r = before;
-                for (Path t : targets) {
-                    r = model.rescan(r, t, progressReporter(this::updateMessage));
+                List<Path> toRescan = new ArrayList<>(targets);
+                if (trashed) {
+                    Deleter.trashDir().filter(d -> d.startsWith(scanRoot)).ifPresent(toRescan::add);
                 }
-                Optional<Path> trashDir = Deleter.trashDir().filter(d -> d.startsWith(scanRoot));
-                if (trashed && trashDir.isPresent()) {
-                    r = model.rescan(r, trashDir.get(), progressReporter(this::updateMessage));
+                // A failed rescan must not lose the delete's outcome: keep going, report it after.
+                ScanResult r = before;
+                for (Path t : toRescan) {
+                    try {
+                        r = model.rescan(r, t, progressReporter(this::updateMessage));
+                    } catch (IOException e) {
+                        rescanErrors.add(t + ": " + e.getMessage());
+                    }
                 }
                 return r;
             }
@@ -695,7 +704,7 @@ public class DiskInventoryApp extends Application {
             targets.stream().map(Path::getParent).distinct().forEach(this::reloadTreeItem);
             // After runTask's own success handler, so the view and result are current and no task runs.
             Platform.runLater(() -> {
-                if (stop.get()) {
+                if (stopped.get()) {
                     status.setText("Delete stopped — the view shows what is left");
                 }
                 if (!failed.isEmpty()) {
@@ -703,6 +712,13 @@ public class DiskInventoryApp extends Application {
                     alert.initOwner(stage);
                     alert.setHeaderText("Could not delete " + failed.size()
                             + (failed.size() == 1 ? " path" : " paths"));
+                    alert.showAndWait();
+                }
+                if (!rescanErrors.isEmpty()) {
+                    Alert alert = new Alert(Alert.AlertType.ERROR, String.join("\n", rescanErrors)
+                            + "\n\nThe tree may not match the disk there until the next rescan (↻).");
+                    alert.initOwner(stage);
+                    alert.setHeaderText("Could not rescan after the delete");
                     alert.showAndWait();
                 }
                 if (trashError.get() != null) {
