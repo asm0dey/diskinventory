@@ -35,6 +35,9 @@ final class TreeEdit {
      * every other subtree is reused by reference.
      */
     static DirectoryNode replace(DirectoryNode root, Path p, DirectoryNode dir, FileEntry file) {
+        if (dir != null && file != null) {
+            throw new IllegalArgumentException("at most one of dir/file may be non-null");
+        }
         if (!p.startsWith(root.path()) || p.equals(root.path())) {
             throw new IllegalArgumentException("path is not strictly under root: " + p);
         }

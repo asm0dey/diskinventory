@@ -107,4 +107,55 @@ class TreeEditTest {
         assertThrows(IllegalArgumentException.class,
                 () -> TreeEdit.replace(tree, root.resolve("missing/x"), null, null));
     }
+
+    @Test
+    void replaceRejectsBothDirAndFileNonNull(@TempDir Path root) throws IOException {
+        DirectoryNode tree = scan(root);
+        DirectoryNode dir = new DirectoryNode(root.resolve("x"), 0, 0, 0, 0, List.of(), List.of(), 0);
+        FileEntry file = new FileEntry("x", 1, 1, 1, null);
+
+        assertThrows(IllegalArgumentException.class, () -> TreeEdit.replace(tree, root.resolve("x"), dir, file));
+    }
+
+    @Test
+    void sharedFileDoesNotContributeToDirectSize(@TempDir Path root) throws IOException {
+        DirectoryNode before = scan(root);
+
+        FileEntry shared = new FileEntry("f", 100, 100, 2, "key");
+        DirectoryNode afterShared = TreeEdit.replace(before, root.resolve("f"), null, shared);
+        assertEquals(0, afterShared.directFileSize());
+        assertEquals(0, afterShared.totalSize());
+
+        FileEntry unshared = new FileEntry("f", 100, 100, 1, null);
+        DirectoryNode afterUnshared = TreeEdit.replace(before, root.resolve("f"), null, unshared);
+        assertEquals(100, afterUnshared.directFileSize());
+        assertEquals(100, afterUnshared.totalSize());
+    }
+
+    @Test
+    void errorCountPropagatesAlongPathOnSwap(@TempDir Path root) {
+        Path aPath = root.resolve("a");
+        Path bPath = aPath.resolve("b");
+        DirectoryNode oldB = new DirectoryNode(bPath, 0, 0, 0, 0, List.of(), List.of(), 2);
+        DirectoryNode oldA = new DirectoryNode(aPath, 0, 0, 0, 0, List.of(oldB), List.of(), 2);
+        DirectoryNode before = new DirectoryNode(root, 0, 0, 0, 0, List.of(oldA), List.of(), 2);
+
+        DirectoryNode newB = new DirectoryNode(bPath, 0, 0, 0, 0, List.of(), List.of(), 5);
+        DirectoryNode after = TreeEdit.replace(before, bPath, newB, null);
+
+        assertEquals(5, after.child("a").orElseThrow().child("b").orElseThrow().errorCount());
+        assertEquals(5, after.child("a").orElseThrow().errorCount());
+        assertEquals(5, after.errorCount());
+    }
+
+    @Test
+    void errorCountDropsWhenSubtreeWithErrorsIsDeleted(@TempDir Path root) {
+        Path aPath = root.resolve("a");
+        DirectoryNode oldA = new DirectoryNode(aPath, 0, 0, 0, 0, List.of(), List.of(), 4);
+        DirectoryNode before = new DirectoryNode(root, 0, 0, 0, 0, List.of(oldA), List.of(), 4);
+
+        DirectoryNode after = TreeEdit.replace(before, aPath, null, null);
+
+        assertEquals(0, after.errorCount());
+    }
 }
