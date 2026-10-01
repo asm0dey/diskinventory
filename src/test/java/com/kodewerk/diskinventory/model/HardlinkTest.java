@@ -302,6 +302,30 @@ class HardlinkTest {
     }
 
     @Test
+    void freedOnDiskOfOverlappingSelectionCountsEachFileOnce(@TempDir Path root) throws IOException {
+        write(root.resolve("d/plain"), 100);
+        ScanResult r = model.scan(root);
+        long plainAllocated = entry(r, "d/plain").allocated();
+
+        Freed freed = model.freedOnDisk(r, Set.of(root.resolve("d"), root.resolve("d/plain")));
+
+        assertEquals(plainAllocated, freed.freed());
+    }
+
+    @Test
+    void freedOnDiskOfOverlappingSelectionCountsSharedLinkOnce(@TempDir Path root) throws IOException {
+        write(root.resolve("d/f"), MIB);
+        link(root.resolve("e/f"), root.resolve("d/f"));
+        ScanResult r = model.scan(root);
+        long fAllocated = entry(r, "d/f").allocated();
+
+        Freed freed = model.freedOnDisk(r, Set.of(root.resolve("d"), root.resolve("d/f")));
+
+        assertEquals(0, freed.freed());
+        assertEquals(fAllocated, freed.staying());
+    }
+
+    @Test
     void sharedBytesReportsLinksOwnedElsewhere(@TempDir Path root) throws IOException {
         write(root.resolve("a/f"), MIB);
         link(root.resolve("b/f"), root.resolve("a/f"));

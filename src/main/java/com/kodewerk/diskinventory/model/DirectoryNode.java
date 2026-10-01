@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.PriorityQueue;
 
 /**
  * One directory in a completed scan. Immutable; the whole tree is built in a
@@ -92,13 +93,16 @@ public final class DirectoryNode {
      * smallest path within this node (its other links elsewhere in the subtree
      * are dropped); {@code otherLinks} is left empty here since a {@link
      * DirectoryNode} has no index to resolve them — see {@link
-     * ScanResult#largestFiles}.
+     * ScanResult#largestFiles}. Bounded min-heap over unshared files,
+     * O(files · log limit); shared files are deduped by fileKey first (there
+     * are normally few of them) and fed into the same heap at the end.
      */
     public List<FileRef> largestFiles(int limit, SizeMode mode) {
         if (limit <= 0) {
             return List.of();
         }
-        List<FileRef> unshared = new ArrayList<>();
+        PriorityQueue<FileRef> heap = new PriorityQueue<>(
+                Comparator.comparingLong(r -> r.file().size(mode)));
         Map<Object, FileRef> sharedBest = new HashMap<>();
         Deque<DirectoryNode> pending = new ArrayDeque<>();
         pending.push(this);
@@ -110,15 +114,23 @@ public final class DirectoryNode {
                     sharedBest.merge(file.fileKey(), ref,
                             (a, b) -> a.path().compareTo(b.path()) <= 0 ? a : b);
                 } else {
-                    unshared.add(ref);
+                    heap.add(ref);
+                    if (heap.size() > limit) {
+                        heap.poll();
+                    }
                 }
             }
             node.children.forEach(pending::push);
         }
-        List<FileRef> all = new ArrayList<>(unshared);
-        all.addAll(sharedBest.values());
-        all.sort(Comparator.comparingLong((FileRef r) -> r.file().size(mode)).reversed());
-        return all.size() > limit ? new ArrayList<>(all.subList(0, limit)) : all;
+        for (FileRef ref : sharedBest.values()) {
+            heap.add(ref);
+            if (heap.size() > limit) {
+                heap.poll();
+            }
+        }
+        List<FileRef> result = new ArrayList<>(heap);
+        result.sort(Comparator.comparingLong((FileRef r) -> r.file().size(mode)).reversed());
+        return result;
     }
 
     @Override

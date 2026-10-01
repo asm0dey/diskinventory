@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 
@@ -124,7 +125,7 @@ public final class DiskUsageModel {
         long freed = 0;
         Map<Object, Integer> selectedLinks = new HashMap<>();
         Map<Object, FileEntry> sample = new HashMap<>();
-        for (Path p : selection) {
+        for (Path p : topLevelOf(selection)) {
             DirectoryNode dir = findDir(result.root(), p);
             if (dir != null) {
                 freed += tallyUnsharedAndCountLinks(dir, selectedLinks, sample);
@@ -161,6 +162,18 @@ public final class DiskUsageModel {
             }
         }
         return new Freed(freed, staying);
+    }
+
+    /**
+     * {@code selection} with every element dropped that sits at or under another
+     * selected element, so a directory and a path inside it are never both
+     * walked — each file would otherwise be tallied once directly and again as
+     * part of its selected ancestor's subtree.
+     */
+    private static Set<Path> topLevelOf(Set<Path> selection) {
+        return selection.stream()
+                .filter(p -> selection.stream().noneMatch(other -> !other.equals(p) && p.startsWith(other)))
+                .collect(Collectors.toSet());
     }
 
     /** Sums unshared files' allocated bytes under {@code dir}, and tallies shared files' links per key. */
