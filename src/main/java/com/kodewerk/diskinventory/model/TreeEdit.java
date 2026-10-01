@@ -3,6 +3,7 @@ package com.kodewerk.diskinventory.model;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -77,25 +78,40 @@ final class TreeEdit {
         children.sort(Comparator.comparingLong((DirectoryNode n) -> n.totalSize()).reversed());
 
         List<FileEntry> files = new ArrayList<>(parent.files());
-        files.removeIf(f -> f.name().equals(name));
+        FileEntry removedFile = null;
+        for (int i = 0; i < files.size(); i++) {
+            if (files.get(i).name().equals(name)) {
+                removedFile = files.remove(i);
+                break;
+            }
+        }
         if (newFile != null) {
             files.add(newFile);
         }
         files.sort(Comparator.comparingLong((FileEntry f) -> f.size()).reversed());
 
-        // Shared files are charged separately via charge(); they never count
-        // toward their directory's own direct size.
-        long directFileSize = files.stream().mapToLong(f -> f.shared() ? 0 : f.size()).sum();
-        long directAllocated = files.stream().mapToLong(f -> f.shared() ? 0 : f.allocated()).sum();
-        long childTotal = children.stream().mapToLong(DirectoryNode::totalSize).sum();
-        long childAllocated = children.stream().mapToLong(c -> c.totalSize(SizeMode.ALLOCATED)).sum();
+        // Adjust by delta rather than recompute: the direct size also carries
+        // charges for shared files owned here, which no file entry accounts for.
+        Charge direct = unshared(newFile).plus(unshared(removedFile).negate());
+        Charge child = new Charge(
+                (newDir != null ? newDir.totalSize() : 0) - (removedDir != null ? removedDir.totalSize() : 0),
+                (newDir != null ? newDir.totalSize(SizeMode.ALLOCATED) : 0)
+                        - (removedDir != null ? removedDir.totalSize(SizeMode.ALLOCATED) : 0));
 
         int removedErrors = removedDir != null ? removedDir.errorCount() : 0;
         int addedErrors = newDir != null ? newDir.errorCount() : 0;
         int errorCount = parent.errorCount() - removedErrors + addedErrors;
 
-        return new DirectoryNode(parent.path(), directFileSize, directFileSize + childTotal,
-                directAllocated, directAllocated + childAllocated, children, files, errorCount);
+        return new DirectoryNode(parent.path(), parent.directFileSize() + direct.size(),
+                parent.totalSize() + direct.size() + child.size(),
+                parent.directFileSize(SizeMode.ALLOCATED) + direct.allocated(),
+                parent.totalSize(SizeMode.ALLOCATED) + direct.allocated() + child.allocated(),
+                children, files, errorCount);
+    }
+
+    /** What a file adds to its directory's direct size; shared files are charged via charge() instead. */
+    private static Charge unshared(FileEntry f) {
+        return f == null || f.shared() ? new Charge(0, 0) : new Charge(f.size(), f.allocated());
     }
 
     private static DirectoryNode replaceChild(DirectoryNode parent, DirectoryNode oldChild, DirectoryNode newChild) {
@@ -119,18 +135,38 @@ final class TreeEdit {
      * affected directory is rebuilt once; everything else is reused by reference.
      */
     static DirectoryNode charge(DirectoryNode root, Map<Path, Charge> deltas) {
-        return chargeNode(root, deltas);
+        Map<Path, Charge> under = new HashMap<>();
+        deltas.forEach((dir, delta) -> {
+            if (dir.startsWith(root.path())) {
+                under.put(dir, delta);
+            }
+        });
+        return under.isEmpty() ? root : chargeNode(root, under);
     }
 
+    /** {@code deltas} holds only directories at or under {@code node}; each is routed to one child per level. */
     private static DirectoryNode chargeNode(DirectoryNode node, Map<Path, Charge> deltas) {
-        boolean changed = deltas.containsKey(node.path());
+        Charge direct = null;
+        int depth = node.path().getNameCount();
+        Map<String, Map<Path, Charge>> byChild = new HashMap<>();
+        for (Map.Entry<Path, Charge> e : deltas.entrySet()) {
+            if (e.getKey().equals(node.path())) {
+                direct = e.getValue();
+            } else {
+                byChild.computeIfAbsent(e.getKey().getName(depth).toString(), k -> new HashMap<>())
+                        .put(e.getKey(), e.getValue());
+            }
+        }
+
+        boolean changed = direct != null;
         List<DirectoryNode> children = new ArrayList<>(node.children());
         long totalSize = node.totalSize();
         long totalAllocated = node.totalSize(SizeMode.ALLOCATED);
         for (int i = 0; i < children.size(); i++) {
             DirectoryNode child = children.get(i);
-            if (deltas.keySet().stream().anyMatch(k -> k.startsWith(child.path()))) {
-                DirectoryNode newChild = chargeNode(child, deltas);
+            Map<Path, Charge> childDeltas = byChild.get(child.name());
+            if (childDeltas != null) {
+                DirectoryNode newChild = chargeNode(child, childDeltas);
                 if (newChild != child) {
                     totalSize += newChild.totalSize() - child.totalSize();
                     totalAllocated += newChild.totalSize(SizeMode.ALLOCATED) - child.totalSize(SizeMode.ALLOCATED);
@@ -145,7 +181,6 @@ final class TreeEdit {
 
         long directFileSize = node.directFileSize();
         long directAllocated = node.directFileSize(SizeMode.ALLOCATED);
-        Charge direct = deltas.get(node.path());
         if (direct != null) {
             directFileSize += direct.size();
             directAllocated += direct.allocated();

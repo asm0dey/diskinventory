@@ -25,6 +25,8 @@ public final class InodeIndex {
         long nlink;
         long size;
         long allocated;
+        /** What settle() last charged to the owner's parent; null when uncharged. */
+        TreeEdit.Charge applied;
 
         Inode(TreeSet<Path> links) {
             this.links = links;
@@ -48,6 +50,7 @@ public final class InodeIndex {
             c.nlink = inode.nlink;
             c.size = inode.size;
             c.allocated = inode.allocated;
+            c.applied = inode.applied;
             copy.inodes.put(key, c);
         });
         return copy;
@@ -64,7 +67,7 @@ public final class InodeIndex {
     /**
      * Drops every link equal to or under {@code p} and returns the keys that
      * lost one. An owner strictly under {@code p} is forgotten, since its charge
-     * goes away with the replaced subtree; an owner equal to {@code p} is kept,
+     * (and its applied charge) goes away with the replaced subtree; an owner equal to {@code p} is kept,
      * because its charge sits in {@code p}'s parent and {@link #settle} must undo it.
      */
     Set<Object> removeLinksUnder(Path p) {
@@ -75,6 +78,7 @@ public final class InodeIndex {
             }
             if (inode.owner != null && inode.owner.startsWith(p) && !inode.owner.equals(p)) {
                 inode.owner = null;
+                inode.applied = null;
             }
         });
         return keys;
@@ -82,8 +86,10 @@ public final class InodeIndex {
 
     /**
      * Re-picks the owner of each given inode and returns the per-directory
-     * deltas that move its charge: minus on the old owner's parent, plus on the
-     * new one's. An inode left with no links is removed.
+     * deltas that move its charge: minus what was last charged on the old
+     * owner's parent, plus the current sizes on the new one's. An owner whose
+     * file changed size is re-charged the same way. An inode left with no
+     * links is removed.
      */
     Map<Path, TreeEdit.Charge> settle(Set<Object> keys) {
         Map<Path, TreeEdit.Charge> deltas = new HashMap<>();
@@ -93,14 +99,16 @@ public final class InodeIndex {
                 continue;
             }
             Path owner = inode.links.isEmpty() ? null : inode.links.first();
-            if (!Objects.equals(owner, inode.owner)) {
-                if (inode.owner != null) {
-                    deltas.merge(inode.owner.getParent(), inode.charge().negate(), TreeEdit.Charge::plus);
+            TreeEdit.Charge current = owner == null ? null : inode.charge();
+            if (!Objects.equals(owner, inode.owner) || !Objects.equals(current, inode.applied)) {
+                if (inode.owner != null && inode.applied != null) {
+                    deltas.merge(inode.owner.getParent(), inode.applied.negate(), TreeEdit.Charge::plus);
                 }
                 if (owner != null) {
-                    deltas.merge(owner.getParent(), inode.charge(), TreeEdit.Charge::plus);
+                    deltas.merge(owner.getParent(), current, TreeEdit.Charge::plus);
                 }
                 inode.owner = owner;
+                inode.applied = current;
             }
             if (owner == null) {
                 inodes.remove(key);

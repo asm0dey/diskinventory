@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -51,6 +52,8 @@ class HardlinkTest {
         assertEquals(MIB, r.root().totalSize());
         assertEquals(MIB, node(r, "a").totalSize());
         assertEquals(0, node(r, "b").totalSize());
+        assertEquals(0, node(r, "b").totalSize(SizeMode.ALLOCATED));
+        assertEquals(node(r, "a").totalSize(SizeMode.ALLOCATED), r.root().totalSize(SizeMode.ALLOCATED));
         assertEquals(MIB, entry(r, "b/f").size());     // listed at full size, not charged
     }
 
@@ -75,5 +78,20 @@ class HardlinkTest {
         assertEquals(MIB, node(up, "aaa").totalSize());
         assertEquals(0, node(up, "child").totalSize());
         assertEquals(MIB, known.root().totalSize());    // previous result untouched
+    }
+
+    @Test
+    void scanParentWithGrownSharedFileMovesTheOldCharge(@TempDir Path parent) throws IOException {
+        write(parent.resolve("child/f"), MIB);
+        link(parent.resolve("aaa/f"), parent.resolve("child/f"));
+        ScanResult known = model.scan(parent.resolve("child"));
+        Files.write(parent.resolve("child/f"), new byte[2 * MIB], StandardOpenOption.APPEND);
+
+        ScanResult up = model.scanParent(known, (d, n, b) -> { });
+
+        assertEquals(0, node(up, "child").totalSize());
+        assertEquals(0, node(up, "child").totalSize(SizeMode.ALLOCATED));
+        assertEquals(3 * MIB, node(up, "aaa").totalSize());
+        assertEquals(3 * MIB, up.root().totalSize());
     }
 }

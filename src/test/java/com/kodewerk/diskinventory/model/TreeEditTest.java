@@ -100,6 +100,41 @@ class TreeEditTest {
     }
 
     @Test
+    void replaceKeepsChargesOfParent(@TempDir Path root) throws IOException {
+        write(root.resolve("a.bin"), 100);
+        DirectoryNode charged = TreeEdit.charge(scan(root), Map.of(root, new TreeEdit.Charge(50, 4096)));
+
+        DirectoryNode after = TreeEdit.replace(charged, root.resolve("a.bin"), null,
+                new FileEntry("a.bin", 300, 300, 1, null));
+
+        assertEquals(350, after.directFileSize());
+        assertEquals(350, after.totalSize());
+        assertEquals(300 + 4096, after.directFileSize(SizeMode.ALLOCATED));
+        assertEquals(300 + 4096, after.totalSize(SizeMode.ALLOCATED));
+    }
+
+    @Test
+    void chargeRoutesManyDeltasToTheirDirectories(@TempDir Path root) throws IOException {
+        Files.createDirectories(root.resolve("a/b"));
+        Files.createDirectories(root.resolve("ab"));
+        Files.createDirectories(root.resolve("c"));
+        DirectoryNode before = scan(root);
+
+        DirectoryNode after = TreeEdit.charge(before, Map.of(
+                root.resolve("a/b"), new TreeEdit.Charge(1, 1),
+                root.resolve("a"), new TreeEdit.Charge(10, 10),
+                root.resolve("ab"), new TreeEdit.Charge(100, 100),
+                root, new TreeEdit.Charge(1000, 1000)));
+
+        assertEquals(1111, after.totalSize());
+        assertEquals(1000, after.directFileSize());
+        assertEquals(11, after.child("a").orElseThrow().totalSize());
+        assertEquals(1, after.child("a").orElseThrow().child("b").orElseThrow().totalSize());
+        assertEquals(100, after.child("ab").orElseThrow().totalSize());
+        assertSame(before.child("c").orElseThrow(), after.child("c").orElseThrow());
+    }
+
+    @Test
     void replaceRejectsPathsNotUnderRoot(@TempDir Path root) throws IOException {
         DirectoryNode tree = scan(root);
 
