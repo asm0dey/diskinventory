@@ -428,7 +428,7 @@ public class DiskInventoryApp extends Application {
         if (!filesToggle.isSelected() || trail.isEmpty()) {
             return;
         }
-        filesList.getItems().setAll(current().largestFiles(TOP_FILES, mode));
+        filesList.getItems().setAll(result.largestFiles(current(), TOP_FILES, mode));
     }
 
     private Path resolveRoot(Stage stage) {

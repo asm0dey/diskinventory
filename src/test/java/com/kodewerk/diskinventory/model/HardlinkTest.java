@@ -12,6 +12,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -226,6 +227,89 @@ class HardlinkTest {
         ScanResult viaOwner = model.rescan(viaLink, root.resolve("a/f"), QUIET);
         assertEquals(3 * MIB, node(viaOwner, "a").totalSize());
         TestTrees.assertMatchesFreshScan(model, viaOwner);
+    }
+
+    @Test
+    void largestFilesListsSharedFileOnce(@TempDir Path root) throws IOException {
+        write(root.resolve("a/top"), MIB);
+        link(root.resolve("b/top"), root.resolve("a/top"));
+        write(root.resolve("c/small"), 100);
+        ScanResult r = model.scan(root);
+
+        List<FileRef> top = r.largestFiles(r.root(), 10, SizeMode.LOGICAL);
+
+        assertEquals(2, top.size());
+        assertEquals(root.resolve("a/top"), top.getFirst().path());
+        assertEquals(List.of(root.resolve("b/top")), top.getFirst().otherLinks());
+    }
+
+    @Test
+    void deleteAllLinksFreesTheFile(@TempDir Path root) throws IOException {
+        write(root.resolve("a/f"), MIB);
+        link(root.resolve("b/f"), root.resolve("a/f"));
+        ScanResult r = model.scan(root);
+
+        Freed freed = model.freedOnDisk(r, Set.of(root.resolve("a/f"), root.resolve("b/f")));
+
+        assertEquals(entry(r, "a/f").allocated(), freed.freed());
+        assertEquals(0, freed.staying());
+    }
+
+    @Test
+    void freedOnDiskCountsLinksOutsideRoot(@TempDir Path tmp) throws IOException {
+        write(tmp.resolve("root/f"), MIB);
+        link(tmp.resolve("outside/f"), tmp.resolve("root/f"));
+        ScanResult r = model.scan(tmp.resolve("root"));
+        long allocated = entry(r, "f").allocated();
+
+        Freed freed = model.freedOnDisk(r, Set.of(tmp.resolve("root/f")));
+
+        assertEquals(0, freed.freed());
+        assertEquals(allocated, freed.staying());
+
+        Files.delete(tmp.resolve("root/f"));
+        ScanResult after = model.rescan(r, tmp.resolve("root/f"), QUIET);
+        assertEquals(0, after.root().totalSize());
+    }
+
+    @Test
+    void freedOnDiskUsesFreshNlink(@TempDir Path root) throws IOException {
+        write(root.resolve("a/f"), MIB);
+        link(root.resolve("b/f"), root.resolve("a/f"));
+        ScanResult r = model.scan(root);
+        long allocated = entry(r, "a/f").allocated();
+
+        Files.delete(root.resolve("b/f"));
+        Freed freed = model.freedOnDisk(r, Set.of(root.resolve("a/f")));
+
+        assertEquals(allocated, freed.freed());
+        assertEquals(0, freed.staying());
+    }
+
+    @Test
+    void freedOnDiskOfDirectoryCountsUnsharedFilesAndOwnedLinks(@TempDir Path root) throws IOException {
+        write(root.resolve("d/plain"), 100);
+        write(root.resolve("d/f"), MIB);
+        link(root.resolve("e/f"), root.resolve("d/f"));
+        ScanResult r = model.scan(root);
+        long plainAllocated = entry(r, "d/plain").allocated();
+        long fAllocated = entry(r, "d/f").allocated();
+
+        Freed freed = model.freedOnDisk(r, Set.of(root.resolve("d")));
+
+        assertEquals(plainAllocated, freed.freed());
+        assertEquals(fAllocated, freed.staying());
+    }
+
+    @Test
+    void sharedBytesReportsLinksOwnedElsewhere(@TempDir Path root) throws IOException {
+        write(root.resolve("a/f"), MIB);
+        link(root.resolve("b/f"), root.resolve("a/f"));
+        ScanResult r = model.scan(root);
+
+        assertEquals(MIB, r.sharedBytes(root.resolve("b"), SizeMode.LOGICAL));
+        assertEquals(0, r.sharedBytes(root.resolve("a"), SizeMode.LOGICAL));
+        assertEquals(0, r.sharedBytes(root, SizeMode.LOGICAL));
     }
 
     @Test

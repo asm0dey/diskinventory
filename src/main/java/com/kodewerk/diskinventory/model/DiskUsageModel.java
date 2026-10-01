@@ -11,8 +11,11 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
@@ -108,6 +111,115 @@ public final class DiskUsageModel {
     }
 
     /**
+     * What deleting {@code selection} (files and/or directories from the tree,
+     * no disk access for them) would free on disk, in allocated bytes. An
+     * unshared file under the selection always frees its allocated bytes. Each
+     * shared inode with at least one link in the selection is re-stat'ed fresh
+     * on one of its still-existing links: if its fresh {@code nlink} equals the
+     * number of its links in the selection, every link is being deleted and it
+     * frees; otherwise a link outside the selection survives and its bytes stay.
+     * An inode whose links have all vanished on disk already is skipped.
+     */
+    public Freed freedOnDisk(ScanResult result, Set<Path> selection) {
+        long freed = 0;
+        Map<Object, Integer> selectedLinks = new HashMap<>();
+        Map<Object, FileEntry> sample = new HashMap<>();
+        for (Path p : selection) {
+            DirectoryNode dir = findDir(result.root(), p);
+            if (dir != null) {
+                freed += tallyUnsharedAndCountLinks(dir, selectedLinks, sample);
+                continue;
+            }
+            FileEntry file = findFile(result.root(), p);
+            if (file == null) {
+                continue;
+            }
+            if (file.shared()) {
+                selectedLinks.merge(file.fileKey(), 1, Integer::sum);
+                sample.putIfAbsent(file.fileKey(), file);
+            } else {
+                freed += file.allocated();
+            }
+        }
+
+        long staying = 0;
+        try (AllocatedSizeProbe probe = AllocatedSizeProbe.create()) {
+            for (Map.Entry<Object, Integer> e : selectedLinks.entrySet()) {
+                Object key = e.getKey();
+                Path existing = result.inodes().linksOf(key).stream()
+                        .filter(l -> Files.exists(l, NOFOLLOW_LINKS))
+                        .findFirst().orElse(null);
+                if (existing == null) {
+                    continue;    // all links already gone on disk
+                }
+                long allocated = sample.get(key).allocated();
+                if (freshNlink(existing, probe) == e.getValue()) {
+                    freed += allocated;
+                } else {
+                    staying += allocated;
+                }
+            }
+        }
+        return new Freed(freed, staying);
+    }
+
+    /** Sums unshared files' allocated bytes under {@code dir}, and tallies shared files' links per key. */
+    private static long tallyUnsharedAndCountLinks(DirectoryNode dir, Map<Object, Integer> selectedLinks,
+                                                     Map<Object, FileEntry> sample) {
+        long freed = 0;
+        for (FileEntry f : dir.files()) {
+            if (f.shared()) {
+                selectedLinks.merge(f.fileKey(), 1, Integer::sum);
+                sample.putIfAbsent(f.fileKey(), f);
+            } else {
+                freed += f.allocated();
+            }
+        }
+        for (DirectoryNode child : dir.children()) {
+            freed += tallyUnsharedAndCountLinks(child, selectedLinks, sample);
+        }
+        return freed;
+    }
+
+    /** The node at {@code target} in the tree rooted at {@code root}, or null if it names a file or isn't there. */
+    private static DirectoryNode findDir(DirectoryNode root, Path target) {
+        if (target.equals(root.path())) {
+            return root;
+        }
+        if (!target.startsWith(root.path())) {
+            return null;
+        }
+        DirectoryNode node = root;
+        for (Path segment : root.path().relativize(target)) {
+            Optional<DirectoryNode> child = node.child(segment.toString());
+            if (child.isEmpty()) {
+                return null;
+            }
+            node = child.get();
+        }
+        return node;
+    }
+
+    /** The file entry at {@code target} in the tree rooted at {@code root}, or null if it isn't there. */
+    private static FileEntry findFile(DirectoryNode root, Path target) {
+        Path parent = target.getParent();
+        if (parent == null) {
+            return null;
+        }
+        DirectoryNode dir = findDir(root, parent);
+        if (dir == null) {
+            return null;
+        }
+        String name = target.getFileName().toString();
+        return dir.files().stream().filter(f -> f.name().equals(name)).findFirst().orElse(null);
+    }
+
+    /** Fresh nlink of {@code path}, same fallback chain as {@link #entryFor}. */
+    private static long freshNlink(Path path, AllocatedSizeProbe probe) {
+        return probe != null ? probe.stat(path, -1L).nlink() : readNlinkFallback(path);
+    }
+
+    /**
      * Whether allocated (on-disk) sizes are real on this platform and build.
      * Performs an actual lstat downcall rather than only constructing the
      * probe: an unregistered downcall stub in a native image surfaces either
@@ -139,18 +251,19 @@ public final class DiskUsageModel {
             nlink = fileKey == null ? 1 : stat.nlink();
         } else {
             allocated = size;
-            if (fileKey == null) {
-                nlink = 1;
-            } else {
-                try {
-                    nlink = ((Number) Files.getAttribute(file, "unix:nlink", NOFOLLOW_LINKS)).longValue();
-                } catch (UnsupportedOperationException | IOException e) {
-                    nlink = 1;
-                }
-            }
+            nlink = fileKey == null ? 1 : readNlinkFallback(file);
         }
         return new FileEntry(file.getFileName().toString(), size, allocated, nlink,
                 nlink > 1 ? fileKey : null);
+    }
+
+    /** {@code unix:nlink} view, falling back to 1 when unsupported or unreadable (e.g. the path is gone). */
+    private static long readNlinkFallback(Path path) {
+        try {
+            return ((Number) Files.getAttribute(path, "unix:nlink", NOFOLLOW_LINKS)).longValue();
+        } catch (UnsupportedOperationException | IOException e) {
+            return 1;
+        }
     }
 
     private ScanResult scan(Path root, ScanListener listener, DirectoryNode graft, InodeIndex inodes)

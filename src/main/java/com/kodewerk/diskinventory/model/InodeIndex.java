@@ -126,4 +126,16 @@ public final class InodeIndex {
         Inode inode = inodes.get(key);
         return inode == null ? List.of() : List.copyOf(inode.links);
     }
+
+    /** Bytes, once per inode, of inodes with a link under {@code dir} whose owner is not under {@code dir}. */
+    long sharedBytesUnder(Path dir, SizeMode mode) {
+        long sum = 0;
+        for (Inode inode : inodes.values()) {
+            boolean ownerUnder = inode.owner != null && inode.owner.startsWith(dir);
+            if (!ownerUnder && inode.links.stream().anyMatch(l -> l.startsWith(dir))) {
+                sum += mode == SizeMode.ALLOCATED ? inode.allocated : inode.size;
+            }
+        }
+        return sum;
+    }
 }
