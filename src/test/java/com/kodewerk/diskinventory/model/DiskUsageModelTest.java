@@ -8,10 +8,14 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -272,5 +276,117 @@ class DiskUsageModelTest {
         assertTrue(a.shared());
         assertFalse(c.shared());
         assertEquals(1, c.nlink());
+    }
+
+    private static final DiskUsageModel.ScanListener QUIET = (d, n, b) -> { };
+
+    @Test
+    void rescanPicksUpNewFiles(@TempDir Path root) throws IOException {
+        Path sub = Files.createDirectory(root.resolve("sub"));
+        write(sub.resolve("old.bin"), 100);
+        ScanResult r = model.scan(root);
+
+        write(sub.resolve("new.bin"), 300);
+        ScanResult after = model.rescan(r, sub, QUIET);
+
+        assertEquals(r.root().totalSize() + 300, after.root().totalSize());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanOfVanishedPathDropsIt(@TempDir Path root) throws IOException {
+        Path sub = Files.createDirectories(root.resolve("sub/deep"));
+        write(sub.resolve("x.bin"), 100);
+        write(root.resolve("keep.bin"), 50);
+        ScanResult r = model.scan(root);
+
+        try (var walk = Files.walk(root.resolve("sub"))) {
+            for (Path p : walk.sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(p);
+            }
+        }
+        ScanResult after = model.rescan(r, root.resolve("sub"), QUIET);
+
+        assertTrue(after.root().child("sub").isEmpty());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanOfNewPathInsertsIt(@TempDir Path root) throws IOException {
+        ScanResult r = model.scan(root);
+
+        Path fresh = Files.createDirectory(root.resolve("fresh"));
+        write(fresh.resolve("x.bin"), 200);
+        ScanResult after = model.rescan(r, fresh, QUIET);
+
+        assertEquals(200, after.root().child("fresh").orElseThrow().totalSize());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanWhenFileBecameDirectory(@TempDir Path root) throws IOException {
+        write(root.resolve("n"), 100);
+        ScanResult r = model.scan(root);
+
+        Files.delete(root.resolve("n"));
+        Files.createDirectory(root.resolve("n"));
+        write(root.resolve("n/y.bin"), 300);
+        ScanResult after = model.rescan(r, root.resolve("n"), QUIET);
+
+        assertTrue(after.root().files().stream().noneMatch(f -> f.name().equals("n")));
+        assertEquals(300, after.root().child("n").orElseThrow().totalSize());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanOfSingleFile(@TempDir Path root) throws IOException {
+        write(root.resolve("a.bin"), 100);
+        write(root.resolve("b.bin"), 10);
+        ScanResult r = model.scan(root);
+
+        write(root.resolve("a.bin"), 900);
+        ScanResult after = model.rescan(r, root.resolve("a.bin"), QUIET);
+
+        assertEquals(910, after.root().directFileSize());
+        assertEquals(900, entry(after.root(), "a.bin").size());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanOfScanRootIsFullScan(@TempDir Path root) throws IOException {
+        ScanResult r = model.scan(root);
+
+        write(root.resolve("a.bin"), 100);
+        ScanResult after = model.rescan(r, root, QUIET);
+
+        assertEquals(100, after.root().totalSize());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanOutsideScanRootRejected(@TempDir Path parent) throws IOException {
+        Path root = Files.createDirectory(parent.resolve("root"));
+        ScanResult r = model.scan(root);
+
+        assertThrows(IllegalArgumentException.class, () -> model.rescan(r, parent, QUIET));
+        assertThrows(IllegalArgumentException.class, () -> model.rescan(r, parent.resolve("rootx"), QUIET));
+    }
+
+    @Test
+    @EnabledOnOs({OS.MAC, OS.LINUX})
+    void rescanOfUnreadableDirectoryCountsAnError(@TempDir Path root) throws IOException {
+        Path locked = Files.createDirectory(root.resolve("locked"));
+        write(locked.resolve("x.bin"), 100);
+        ScanResult r = model.scan(root);
+
+        Files.setPosixFilePermissions(locked, Set.of());
+        try {
+            assumeFalse(Files.isReadable(locked), "running as root");
+            ScanResult after = model.rescan(r, locked, QUIET);
+            assertEquals(0, after.root().totalSize());
+            assertEquals(1, after.root().errorCount());
+        } finally {
+            Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("rwx------"));
+        }
     }
 }

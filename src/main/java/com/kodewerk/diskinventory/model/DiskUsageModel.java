@@ -3,6 +3,7 @@ package com.kodewerk.diskinventory.model;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -59,6 +60,51 @@ public final class DiskUsageModel {
             return known;
         }
         return scan(parent, listener, known.root(), known.inodes().copy());
+    }
+
+    /**
+     * Re-reads one path, a directory or a single file, and folds it into the
+     * tree, then re-settles the owner of every shared file that gained or lost
+     * a link. A path that is gone (or is now a symlink) is dropped. Rescanning
+     * the scan root is a full scan. {@code result} is not modified, also when
+     * the rescan is cancelled.
+     */
+    public ScanResult rescan(ScanResult result, Path p, ScanListener listener) throws IOException {
+        Path root = result.root().path();
+        if (p.equals(root)) {
+            return scan(root, listener);
+        }
+        if (!p.startsWith(root)) {
+            throw new IllegalArgumentException("path is not under the scan root: " + p);
+        }
+
+        InodeIndex inodes = result.inodes().copy();
+        Set<Object> affected = inodes.removeLinksUnder(p);
+        BasicFileAttributes attrs;
+        try {
+            attrs = Files.readAttributes(p, BasicFileAttributes.class, NOFOLLOW_LINKS);
+        } catch (NoSuchFileException e) {
+            attrs = null;
+        }
+
+        DirectoryNode dir = null;
+        FileEntry file = null;
+        try (AllocatedSizeProbe probe = AllocatedSizeProbe.create()) {
+            if (attrs != null && attrs.isDirectory()) {
+                Visitor visitor = new Visitor(listener, null, probe, inodes);
+                Files.walkFileTree(p, visitor);
+                dir = visitor.result();
+                affected.addAll(visitor.touched());
+            } else if (attrs != null && attrs.isRegularFile()) {
+                file = entryFor(p, attrs, probe);
+                if (file.shared()) {
+                    inodes.addLink(file.fileKey(), p, file.nlink(), file.size(), file.allocated());
+                    affected.add(file.fileKey());
+                }
+            }
+        }
+        DirectoryNode tree = TreeEdit.replace(result.root(), p, dir, file);
+        return new ScanResult(TreeEdit.charge(tree, inodes.settle(affected)), inodes);
     }
 
     /**
@@ -219,8 +265,13 @@ public final class DiskUsageModel {
 
         @Override
         public FileVisitResult visitFileFailed(Path file, IOException exc) {
-            // An unreadable subdirectory arrives here instead of preVisitDirectory.
-            stack.peek().errorCount++;
+            // An unreadable subdirectory arrives here instead of preVisitDirectory;
+            // so does an unreadable rescan path, which then becomes an empty node.
+            if (stack.isEmpty()) {
+                result = new DirectoryNode(file, 0, 0, 0, 0, List.of(), List.of(), 1);
+            } else {
+                stack.peek().errorCount++;
+            }
             return FileVisitResult.CONTINUE;
         }
 

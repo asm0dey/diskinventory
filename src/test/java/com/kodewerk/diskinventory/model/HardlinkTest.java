@@ -9,8 +9,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @EnabledOnOs({OS.MAC, OS.LINUX})
 class HardlinkTest {
@@ -93,5 +98,154 @@ class HardlinkTest {
         assertEquals(0, node(up, "child").totalSize(SizeMode.ALLOCATED));
         assertEquals(3 * MIB, node(up, "aaa").totalSize());
         assertEquals(3 * MIB, up.root().totalSize());
+    }
+
+    private static final DiskUsageModel.ScanListener QUIET = (d, n, b) -> { };
+
+    private static Object key(ScanResult r, String rel) {
+        return entry(r, rel).fileKey();
+    }
+
+    private static void deleteTree(Path dir) throws IOException {
+        try (var walk = Files.walk(dir)) {
+            for (Path p : walk.sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(p);
+            }
+        }
+    }
+
+    @Test
+    void ownerIsSmallestPathRegardlessOfWalkOrder(@TempDir Path root) throws IOException {
+        write(root.resolve("b/f"), MIB);
+        link(root.resolve("a/f"), root.resolve("b/f"));
+        ScanResult r = model.scan(root);
+        Object k = key(r, "a/f");
+        assertEquals(Optional.of(root.resolve("a/f")), r.inodes().owner(k));
+
+        ScanResult ba = model.rescan(model.rescan(r, root.resolve("b"), QUIET), root.resolve("a"), QUIET);
+        ScanResult ab = model.rescan(model.rescan(model.scan(root), root.resolve("a"), QUIET), root.resolve("b"), QUIET);
+
+        for (ScanResult x : List.of(ba, ab)) {
+            assertEquals(Optional.of(root.resolve("a/f")), x.inodes().owner(k));
+            assertEquals(MIB, node(x, "a").totalSize());
+            assertEquals(0, node(x, "b").totalSize());
+            assertEquals(MIB, x.root().totalSize());
+            TestTrees.assertMatchesFreshScan(model, x);
+        }
+    }
+
+    @Test
+    void deleteMovesOwnershipToSurvivingLink(@TempDir Path root) throws IOException {
+        write(root.resolve("a/x/big"), MIB);
+        link(root.resolve("b/y/z/big"), root.resolve("a/x/big"));
+        ScanResult r = model.scan(root);
+        Object k = key(r, "a/x/big");
+
+        Files.delete(root.resolve("a/x/big"));
+        ScanResult after = model.rescan(r, root.resolve("a/x/big"), QUIET);
+
+        assertEquals(0, node(after, "a/x").totalSize());
+        assertEquals(0, node(after, "a/x").totalSize(SizeMode.ALLOCATED));
+        assertEquals(MIB, node(after, "b/y/z").totalSize());
+        assertEquals(MIB, after.root().totalSize());
+        assertEquals(Optional.of(root.resolve("b/y/z/big")), after.inodes().owner(k));
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void deleteLastLinkRemovesBytes(@TempDir Path root) throws IOException {
+        write(root.resolve("a/x/f"), MIB);
+        write(root.resolve("a/x/g"), 10);
+        ScanResult r = model.scan(root);
+
+        Files.delete(root.resolve("a/x/f"));
+        ScanResult after = model.rescan(r, root.resolve("a/x/f"), QUIET);
+
+        assertEquals(node(r, "a/x").totalSize() - MIB, node(after, "a/x").totalSize());
+        assertEquals(node(r, "a").totalSize() - MIB, node(after, "a").totalSize());
+        assertEquals(r.root().totalSize() - MIB, after.root().totalSize());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void deleteOneOfTwoLinksInSameDirectory(@TempDir Path root) throws IOException {
+        write(root.resolve("d/x"), MIB);
+        link(root.resolve("d/y"), root.resolve("d/x"));
+        ScanResult r = model.scan(root);
+
+        Files.delete(root.resolve("d/x"));
+        ScanResult after = model.rescan(r, root.resolve("d/x"), QUIET);
+
+        assertEquals(MIB, node(after, "d").totalSize());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanAddingSmallerLinkMovesOwnership(@TempDir Path root) throws IOException {
+        write(root.resolve("m/f"), MIB);
+        link(root.resolve("z/f"), root.resolve("m/f"));     // keep nlink > 1 at scan time
+        ScanResult r = model.scan(root);
+        Object k = key(r, "m/f");
+
+        link(root.resolve("a/f"), root.resolve("m/f"));
+        ScanResult after = model.rescan(r, root.resolve("a"), QUIET);
+
+        assertEquals(Optional.of(root.resolve("a/f")), after.inodes().owner(k));
+        assertEquals(0, node(after, "m").totalSize());
+        assertEquals(MIB, node(after, "a").totalSize());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanOfVanishedDirectoryResettlesOwnership(@TempDir Path root) throws IOException {
+        write(root.resolve("a/f"), MIB);
+        link(root.resolve("b/f"), root.resolve("a/f"));
+        ScanResult r = model.scan(root);
+        Object k = key(r, "a/f");
+
+        deleteTree(root.resolve("a"));
+        ScanResult after = model.rescan(r, root.resolve("a"), QUIET);
+
+        assertEquals(Optional.of(root.resolve("b/f")), after.inodes().owner(k));
+        assertEquals(MIB, after.root().totalSize());
+        TestTrees.assertMatchesFreshScan(model, after);
+    }
+
+    @Test
+    void rescanOfGrownSharedFileUpdatesOwnerCharge(@TempDir Path root) throws IOException {
+        write(root.resolve("a/f"), MIB);
+        link(root.resolve("b/f"), root.resolve("a/f"));
+        ScanResult r = model.scan(root);
+
+        Files.write(root.resolve("a/f"), new byte[MIB], StandardOpenOption.APPEND);
+        ScanResult viaLink = model.rescan(r, root.resolve("b"), QUIET);     // owner a/f unchanged
+        assertEquals(2 * MIB, node(viaLink, "a").totalSize());
+        TestTrees.assertMatchesFreshScan(model, viaLink);
+
+        Files.write(root.resolve("a/f"), new byte[MIB], StandardOpenOption.APPEND);
+        ScanResult viaOwner = model.rescan(viaLink, root.resolve("a/f"), QUIET);
+        assertEquals(3 * MIB, node(viaOwner, "a").totalSize());
+        TestTrees.assertMatchesFreshScan(model, viaOwner);
+    }
+
+    @Test
+    void cancelledRescanLeavesPreviousResultIntact(@TempDir Path root) throws IOException {
+        write(root.resolve("a/f"), MIB);
+        link(root.resolve("b/f"), root.resolve("a/f"));
+        ScanResult r = model.scan(root);
+        Object k = key(r, "a/f");
+
+        Thread.currentThread().interrupt();
+        try {
+            assertThrows(DiskUsageModel.ScanCancelledException.class,
+                    () -> model.rescan(r, root.resolve("a"), QUIET));
+        } finally {
+            assertTrue(Thread.interrupted(), "interrupt flag should still be set; also clears it");
+        }
+
+        assertEquals(MIB, r.root().totalSize());
+        assertEquals(MIB, node(r, "a").totalSize());
+        assertEquals(List.of(root.resolve("a/f"), root.resolve("b/f")), r.inodes().linksOf(k));
+        assertEquals(Optional.of(root.resolve("a/f")), r.inodes().owner(k));
     }
 }
