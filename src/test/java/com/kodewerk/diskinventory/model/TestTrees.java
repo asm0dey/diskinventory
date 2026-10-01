@@ -23,6 +23,7 @@ final class TestTrees {
         assertEquals(expected.totalSize(SizeMode.ALLOCATED), actual.totalSize(SizeMode.ALLOCATED),
                 "allocated total at " + at);
         assertEquals(expected.directFileSize(), actual.directFileSize(), "direct size at " + at);
+        assertEquals(expected.errorCount(), actual.errorCount(), "unreadable entries at " + at);
         assertEquals(names(expected), names(actual), "children at " + at);
         for (DirectoryNode child : expected.children()) {
             assertSameTotals(child, actual.child(child.name()).orElseThrow());

@@ -394,6 +394,26 @@ class DiskUsageModelTest {
     }
 
     @Test
+    @EnabledOnOs({OS.MAC, OS.LINUX})
+    void directoryUnreadableAtScanIsCountedOnceAfterRescan(@TempDir Path root) throws IOException {
+        Path locked = Files.createDirectory(root.resolve("locked"));
+        write(locked.resolve("x.bin"), 100);
+        Files.setPosixFilePermissions(locked, Set.of());
+        try {
+            assumeFalse(Files.isReadable(locked), "running as root");
+            ScanResult r = model.scan(root);
+            assertEquals(1, r.root().errorCount());
+
+            ScanResult after = model.rescan(r, locked, QUIET);
+
+            assertEquals(1, after.root().errorCount());
+            TestTrees.assertMatchesFreshScan(model, after);
+        } finally {
+            Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("rwx------"));
+        }
+    }
+
+    @Test
     void rescanWalkThatFindsThePathGoneYieldsNoNode(@TempDir Path root) {
         // p vanishing between rescan's readAttributes and its walk: the walk's first callback.
         DiskUsageModel.Visitor gone = new DiskUsageModel.Visitor((d, n, b) -> { }, null, null, new InodeIndex());

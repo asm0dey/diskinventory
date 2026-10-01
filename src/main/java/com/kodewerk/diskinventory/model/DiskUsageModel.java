@@ -3,6 +3,7 @@ package com.kodewerk.diskinventory.model;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
@@ -296,6 +297,11 @@ public final class DiskUsageModel {
         }
     }
 
+    /** An empty node for a directory that could not be read: one error, no bytes. */
+    private static DirectoryNode unreadable(Path dir) {
+        return new DirectoryNode(dir, 0, 0, 0, 0, List.of(), List.of(), 1);
+    }
+
     private static final class Building {
         final Path path;
         long directFileSize;
@@ -391,14 +397,19 @@ public final class DiskUsageModel {
 
         @Override
         public FileVisitResult visitFileFailed(Path file, IOException exc) {
-            // An unreadable subdirectory arrives here instead of preVisitDirectory;
-            // so does an unreadable rescan path, which then becomes an empty node,
-            // or a rescan path gone since rescan read its attributes: no node.
+            // An unreadable subdirectory arrives here instead of preVisitDirectory.
+            // It becomes an empty node carrying the error, whether met in a walk
+            // or as the rescan path itself, so a later rescan replaces the error
+            // instead of adding a second one. A rescan path gone since rescan
+            // read its attributes yields no node.
             if (stack.isEmpty()) {
-                result = exc instanceof NoSuchFileException ? null
-                        : new DirectoryNode(file, 0, 0, 0, 0, List.of(), List.of(), 1);
+                result = exc instanceof NoSuchFileException ? null : unreadable(file);
             } else {
-                stack.peek().errorCount++;
+                Building parent = stack.peek();
+                parent.errorCount++;
+                if (Files.isDirectory(file, LinkOption.NOFOLLOW_LINKS)) {
+                    parent.children.add(unreadable(file));
+                }
             }
             return FileVisitResult.CONTINUE;
         }
