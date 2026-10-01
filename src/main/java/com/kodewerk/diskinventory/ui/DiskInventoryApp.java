@@ -5,6 +5,7 @@ import com.kodewerk.diskinventory.model.DiskFree;
 import com.kodewerk.diskinventory.model.DiskUsageModel;
 import com.kodewerk.diskinventory.model.FileEntry;
 import com.kodewerk.diskinventory.model.FileRef;
+import com.kodewerk.diskinventory.model.ScanResult;
 import com.kodewerk.diskinventory.model.SizeMode;
 import com.kodewerk.diskinventory.model.Sizes;
 import javafx.application.Application;
@@ -79,7 +80,8 @@ public class DiskInventoryApp extends Application {
     private TreeView<Path> dirTree;
     private boolean syncingTree;
 
-    private Task<DirectoryNode> currentTask;
+    private Task<ScanResult> currentTask;
+    private ScanResult result;
     private volatile Path scanningDir;
     private Path pivotTarget;
 
@@ -227,15 +229,15 @@ public class DiskInventoryApp extends Application {
 
     /** Walks the scan root up to {@code target}, grafting at each level. */
     private void walkUpTo(Path target) {
-        DirectoryNode top = trail.getFirst();
-        if (top.path().equals(target) || !top.path().startsWith(target)) {
+        ScanResult top = result;
+        if (top.root().path().equals(target) || !top.root().path().startsWith(target)) {
             return;
         }
         runScan(new Task<>() {
             @Override
-            protected DirectoryNode call() throws Exception {
-                DirectoryNode node = top;
-                while (!node.path().equals(target)) {
+            protected ScanResult call() throws Exception {
+                ScanResult node = top;
+                while (!node.root().path().equals(target)) {
                     node = model.scanParent(node, progressReporter(this::updateMessage));
                 }
                 return node;
@@ -447,13 +449,13 @@ public class DiskInventoryApp extends Application {
             render();
             return;
         }
-        DirectoryNode top = trail.getFirst();
-        if (top.path().getParent() == null) {
+        ScanResult top = result;
+        if (top.root().path().getParent() == null) {
             return;
         }
         runScan(new Task<>() {
             @Override
-            protected DirectoryNode call() throws Exception {
+            protected ScanResult call() throws Exception {
                 return model.scanParent(top, progressReporter(this::updateMessage));
             }
         });
@@ -463,7 +465,7 @@ public class DiskInventoryApp extends Application {
         Path target = root;
         runScan(new Task<>() {
             @Override
-            protected DirectoryNode call() throws Exception {
+            protected ScanResult call() throws Exception {
                 return model.scan(target, progressReporter(this::updateMessage));
             }
         });
@@ -487,7 +489,7 @@ public class DiskInventoryApp extends Application {
         };
     }
 
-    private void runScan(Task<DirectoryNode> task) {
+    private void runScan(Task<ScanResult> task) {
         currentTask = task;
         pivotTarget = null;
         scanningDir = null;
@@ -499,11 +501,11 @@ public class DiskInventoryApp extends Application {
         status.textProperty().bind(task.messageProperty());
         task.setOnSucceeded(e -> {
             scanFinished();
-            DirectoryNode result = task.getValue();
-            root = result.path();
+            result = task.getValue();
+            root = result.root().path();
             stage.setTitle("Disk Inventory — " + root);
             trail.clear();
-            trail.add(result);
+            trail.add(result.root());
             render();
             refreshDf();
         });

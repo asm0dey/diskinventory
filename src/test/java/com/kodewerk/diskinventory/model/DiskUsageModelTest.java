@@ -40,7 +40,7 @@ class DiskUsageModelTest {
         Path nested = Files.createDirectory(sub.resolve("nested"));
         write(nested.resolve("d.bin"), 25);
 
-        DirectoryNode result = model.scan(root);
+        DirectoryNode result = model.scan(root).root();
 
         assertEquals(150, result.directFileSize());
         assertEquals(475, result.totalSize());
@@ -63,7 +63,7 @@ class DiskUsageModelTest {
             write(dir.resolve("f.bin"), i * 100);
         }
 
-        List<DirectoryNode> children = model.scan(root).children();
+        List<DirectoryNode> children = model.scan(root).root().children();
 
         assertEquals(List.of("dir3", "dir2", "dir1"),
                 children.stream().map(DirectoryNode::name).toList());
@@ -77,7 +77,7 @@ class DiskUsageModelTest {
         Path b = Files.createDirectory(root.resolve("b"));
         write(b.resolve("y.bin"), 13);
 
-        DirectoryNode result = model.scan(root);
+        DirectoryNode result = model.scan(root).root();
 
         long childSum = result.children().stream().mapToLong(DirectoryNode::totalSize).sum();
         assertEquals(result.totalSize(), result.directFileSize() + childSum);
@@ -85,7 +85,7 @@ class DiskUsageModelTest {
 
     @Test
     void emptyDirectoryIsZero(@TempDir Path root) throws IOException {
-        DirectoryNode result = model.scan(root);
+        DirectoryNode result = model.scan(root).root();
 
         assertEquals(0, result.totalSize());
         assertEquals(0, result.directFileSize());
@@ -100,7 +100,7 @@ class DiskUsageModelTest {
         Files.createSymbolicLink(root.resolve("dirlink"), real);
         Files.createSymbolicLink(root.resolve("filelink"), real.resolve("big.bin"));
 
-        DirectoryNode result = model.scan(root);
+        DirectoryNode result = model.scan(root).root();
 
         // Only the real directory and the real files contribute.
         assertEquals(1, result.children().size());
@@ -130,7 +130,7 @@ class DiskUsageModelTest {
             raf.setLength(16 * 1024 * 1024);    // a hole: no blocks written
         }
 
-        DirectoryNode result = model.scan(root);
+        DirectoryNode result = model.scan(root).root();
 
         assertEquals(65536 + 16 * 1024 * 1024, result.totalSize(SizeMode.LOGICAL));
 
@@ -153,8 +153,9 @@ class DiskUsageModelTest {
         write(child.resolve("c.bin"), 4096);
         write(parent.resolve("p.bin"), 4096);
 
-        DirectoryNode known = model.scan(child);
-        DirectoryNode result = model.scanParent(known, (d, n, b) -> { });
+        ScanResult knownResult = model.scan(child);
+        DirectoryNode known = knownResult.root();
+        DirectoryNode result = model.scanParent(knownResult, (d, n, b) -> { }).root();
 
         assertEquals(known.totalSize(SizeMode.ALLOCATED) + result.directFileSize(SizeMode.ALLOCATED),
                 result.totalSize(SizeMode.ALLOCATED));
@@ -171,7 +172,7 @@ class DiskUsageModelTest {
         Path b = Files.createDirectory(root.resolve("b"));
         write(b.resolve("small.bin"), 100);
 
-        DirectoryNode result = model.scan(root);
+        DirectoryNode result = model.scan(root).root();
 
         List<FileRef> top3 = result.largestFiles(3, SizeMode.LOGICAL);
         assertEquals(List.of("biggest.bin", "big.bin", "mid.bin"),
@@ -201,7 +202,7 @@ class DiskUsageModelTest {
         write(root.resolve("large.bin"), 500);
         write(root.resolve("medium.bin"), 100);
 
-        DirectoryNode result = model.scan(root);
+        DirectoryNode result = model.scan(root).root();
 
         assertEquals(List.of("large.bin", "medium.bin", "small.bin"),
                 result.files().stream().map(FileEntry::name).toList());
@@ -218,10 +219,11 @@ class DiskUsageModelTest {
         write(sibling.resolve("s.bin"), 300);
         write(parent.resolve("loose.bin"), 50);
 
-        DirectoryNode known = model.scan(child);
+        ScanResult knownResult = model.scan(child);
+        DirectoryNode known = knownResult.root();
 
         AtomicInteger visited = new AtomicInteger();
-        DirectoryNode result = model.scanParent(known, (dir, dirs, bytes) -> visited.incrementAndGet());
+        DirectoryNode result = model.scanParent(knownResult, (dir, dirs, bytes) -> visited.incrementAndGet()).root();
 
         assertEquals(parent, result.path());
         assertEquals(550, result.totalSize());
@@ -237,7 +239,9 @@ class DiskUsageModelTest {
     void scanParentOfFilesystemRootReturnsSameNode() throws IOException {
         DirectoryNode fsRoot = new DirectoryNode(Path.of("/"), 0, 0, 0, 0, List.of(), List.of(), 0);
 
-        assertSame(fsRoot, model.scanParent(fsRoot, (d, n, b) -> { }));
+        ScanResult known = new ScanResult(fsRoot, new InodeIndex());
+
+        assertSame(known, model.scanParent(known, (d, n, b) -> { }));
     }
 
     @Test
@@ -261,7 +265,7 @@ class DiskUsageModelTest {
         write(root.resolve("a"), 100);
         Files.createLink(root.resolve("b"), root.resolve("a"));
         write(root.resolve("c"), 100);
-        DirectoryNode result = model.scan(root);
+        DirectoryNode result = model.scan(root).root();
         FileEntry a = entry(result, "a"), b = entry(result, "b"), c = entry(result, "c");
         assertEquals(2, a.nlink());
         assertEquals(a.fileKey(), b.fileKey());

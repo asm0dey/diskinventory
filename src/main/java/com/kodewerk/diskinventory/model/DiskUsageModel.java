@@ -10,15 +10,18 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 
 /**
  * Headless scan API. {@link #scan(Path)} walks the tree once, summing logical
  * file sizes ({@code Files.size} semantics), and returns an immutable
- * {@link DirectoryNode} tree. Symbolic links are not followed; unreadable
- * entries are counted, not fatal.
+ * {@link DirectoryNode} tree with its {@link InodeIndex}. A file with several
+ * hardlinks in the tree is counted once, in its owner's directory. Symbolic
+ * links are not followed; unreadable entries are counted, not fatal.
  */
 public final class DiskUsageModel {
 
@@ -35,26 +38,27 @@ public final class DiskUsageModel {
         }
     }
 
-    public DirectoryNode scan(Path root) throws IOException {
+    public ScanResult scan(Path root) throws IOException {
         return scan(root, (dir, dirs, bytes) -> { });
     }
 
-    public DirectoryNode scan(Path root, ScanListener listener) throws IOException {
-        return scan(root, listener, null);
+    public ScanResult scan(Path root, ScanListener listener) throws IOException {
+        return scan(root, listener, null, new InodeIndex());
     }
 
     /**
      * Scans the parent directory of an already-scanned node, grafting the known
      * subtree in place rather than re-walking it. Only the parent's other
-     * children touch the disk. Returns {@code known} unchanged if it is already
-     * the filesystem root.
+     * children touch the disk. Shared files found there may take ownership
+     * away from links in the known subtree. Returns {@code known} unchanged if
+     * it is already the filesystem root; otherwise {@code known} is not modified.
      */
-    public DirectoryNode scanParent(DirectoryNode known, ScanListener listener) throws IOException {
-        Path parent = known.path().getParent();
+    public ScanResult scanParent(ScanResult known, ScanListener listener) throws IOException {
+        Path parent = known.root().path().getParent();
         if (parent == null) {
             return known;
         }
-        return scan(parent, listener, known);
+        return scan(parent, listener, known.root(), known.inodes().copy());
     }
 
     /**
@@ -103,7 +107,8 @@ public final class DiskUsageModel {
                 nlink > 1 ? fileKey : null);
     }
 
-    private DirectoryNode scan(Path root, ScanListener listener, DirectoryNode graft) throws IOException {
+    private ScanResult scan(Path root, ScanListener listener, DirectoryNode graft, InodeIndex inodes)
+            throws IOException {
         if (!Files.isDirectory(root)) {
             throw new IOException("Not a directory: " + root);
         }
@@ -112,9 +117,10 @@ public final class DiskUsageModel {
         }
 
         try (AllocatedSizeProbe probe = AllocatedSizeProbe.create()) {
-            Visitor visitor = new Visitor(listener, graft, probe);
+            Visitor visitor = new Visitor(listener, graft, probe, inodes);
             Files.walkFileTree(root, visitor);
-            return visitor.result();
+            DirectoryNode tree = TreeEdit.charge(visitor.result(), inodes.settle(visitor.touched()));
+            return new ScanResult(tree, inodes);
         }
     }
 
@@ -137,20 +143,28 @@ public final class DiskUsageModel {
         private final ScanListener listener;
         private final DirectoryNode graft;
         private final AllocatedSizeProbe probe;
+        private final InodeIndex inodes;
+        private final Set<Object> touched = new HashSet<>();
         private final Deque<Building> stack = new ArrayDeque<>();
         private long dirsSoFar;
         private long bytesSoFar;
         private long fileTally;
         private DirectoryNode result;
 
-        Visitor(ScanListener listener, DirectoryNode graft, AllocatedSizeProbe probe) {
+        Visitor(ScanListener listener, DirectoryNode graft, AllocatedSizeProbe probe, InodeIndex inodes) {
             this.listener = listener;
             this.graft = graft;
             this.probe = probe;
+            this.inodes = inodes;
         }
 
         DirectoryNode result() {
             return result;
+        }
+
+        /** Keys of the shared files this walk found; their owners need settling. */
+        Set<Object> touched() {
+            return touched;
         }
 
         @Override
@@ -182,11 +196,17 @@ public final class DiskUsageModel {
             }
             Building current = stack.peek();
             FileEntry entry = entryFor(file, attrs, probe);
+            current.files.add(entry);
+            if (entry.shared()) {
+                // Counted later, once, in its owner's directory via settle().
+                inodes.addLink(entry.fileKey(), file, entry.nlink(), entry.size(), entry.allocated());
+                touched.add(entry.fileKey());
+                return FileVisitResult.CONTINUE;
+            }
             current.directFileSize += entry.size();
             current.totalSize += entry.size();
             current.directAllocated += entry.allocated();
             current.totalAllocated += entry.allocated();
-            current.files.add(entry);
             bytesSoFar += entry.size();
             return FileVisitResult.CONTINUE;
         }

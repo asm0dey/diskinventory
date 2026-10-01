@@ -21,7 +21,7 @@ class TreeEditTest {
     }
 
     private static DirectoryNode scan(Path root) throws IOException {
-        return new DiskUsageModel().scan(root);
+        return new DiskUsageModel().scan(root).root();
     }
 
     @Test
