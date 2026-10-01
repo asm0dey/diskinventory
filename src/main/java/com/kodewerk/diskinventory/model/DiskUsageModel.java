@@ -12,6 +12,8 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.List;
 
+import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
+
 /**
  * Headless scan API. {@link #scan(Path)} walks the tree once, summing logical
  * file sizes ({@code Files.size} semantics), and returns an immutable
@@ -64,8 +66,41 @@ public final class DiskUsageModel {
      */
     public static boolean allocatedSizeSupported() {
         try (AllocatedSizeProbe probe = AllocatedSizeProbe.create()) {
-            return probe != null && probe.allocatedOf(Path.of("."), -1L) >= 0L;
+            return probe != null && probe.stat(Path.of("."), -1L).allocated() >= 0L;
         }
+    }
+
+    /**
+     * Builds the {@link FileEntry} for one scanned file, the single place
+     * nlink and fileKey are resolved. {@code fileKey} is kept only when
+     * {@code nlink > 1} (a shared file); otherwise it's dropped even if the
+     * filesystem reports one.
+     */
+    static FileEntry entryFor(Path file, BasicFileAttributes attrs, AllocatedSizeProbe probe) {
+        long size = attrs.size();
+        Object fileKey = attrs.fileKey();
+        long allocated;
+        long nlink;
+        if (probe != null) {
+            AllocatedSizeProbe.Stat stat = probe.stat(file, size);
+            allocated = stat.allocated();
+            // No fileKey to group links by, so there's no point trusting the
+            // probe's nlink beyond 1 - it would never pair with another entry.
+            nlink = fileKey == null ? 1 : stat.nlink();
+        } else {
+            allocated = size;
+            if (fileKey == null) {
+                nlink = 1;
+            } else {
+                try {
+                    nlink = ((Number) Files.getAttribute(file, "unix:nlink", NOFOLLOW_LINKS)).longValue();
+                } catch (UnsupportedOperationException | IOException e) {
+                    nlink = 1;
+                }
+            }
+        }
+        return new FileEntry(file.getFileName().toString(), size, allocated, nlink,
+                nlink > 1 ? fileKey : null);
     }
 
     private DirectoryNode scan(Path root, ScanListener listener, DirectoryNode graft) throws IOException {
@@ -146,14 +181,13 @@ public final class DiskUsageModel {
                 checkCancelled();
             }
             Building current = stack.peek();
-            long size = attrs.size();
-            long allocated = probe != null ? probe.allocatedOf(file, size) : size;
-            current.directFileSize += size;
-            current.totalSize += size;
-            current.directAllocated += allocated;
-            current.totalAllocated += allocated;
-            current.files.add(new FileEntry(file.getFileName().toString(), size, allocated));
-            bytesSoFar += size;
+            FileEntry entry = entryFor(file, attrs, probe);
+            current.directFileSize += entry.size();
+            current.totalSize += entry.size();
+            current.directAllocated += entry.allocated();
+            current.totalAllocated += entry.allocated();
+            current.files.add(entry);
+            bytesSoFar += entry.size();
             return FileVisitResult.CONTINUE;
         }
 

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -22,6 +23,10 @@ class DiskUsageModelTest {
 
     private static void write(Path file, int bytes) throws IOException {
         Files.write(file, new byte[bytes]);
+    }
+
+    private static FileEntry entry(DirectoryNode node, String name) {
+        return node.files().stream().filter(f -> f.name().equals(name)).findFirst().orElseThrow();
     }
 
     @Test
@@ -248,5 +253,20 @@ class DiskUsageModelTest {
     @EnabledOnOs({OS.MAC, OS.LINUX})    // Windows has no probe
     void allocatedSizesAreSupportedOnMacAndLinux() {
         assertTrue(DiskUsageModel.allocatedSizeSupported());
+    }
+
+    @Test
+    @EnabledOnOs({OS.MAC, OS.LINUX})
+    void sharedFileEntriesCarryNlinkAndFileKey(@TempDir Path root) throws IOException {
+        write(root.resolve("a"), 100);
+        Files.createLink(root.resolve("b"), root.resolve("a"));
+        write(root.resolve("c"), 100);
+        DirectoryNode result = model.scan(root);
+        FileEntry a = entry(result, "a"), b = entry(result, "b"), c = entry(result, "c");
+        assertEquals(2, a.nlink());
+        assertEquals(a.fileKey(), b.fileKey());
+        assertTrue(a.shared());
+        assertFalse(c.shared());
+        assertEquals(1, c.nlink());
     }
 }
