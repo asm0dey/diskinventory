@@ -1079,6 +1079,10 @@ public class DiskInventoryApp extends Application {
     private void render() {
         DirectoryNode node = current();
         chart.getData().clear();
+        // PieChart caches its label layout by geometry alone: refilled with
+        // the same sizes it skips placing the new labels, which stay at (0,0).
+        // Laying the empty chart out resets that cache.
+        chart.layout();
         renderBreadcrumb();
         crumbSize.setText(Sizes.human(node.totalSize(mode))
                 + (mode == SizeMode.ALLOCATED ? " on disk" : " logical"));
