@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -128,16 +127,20 @@ public final class Deleter {
         run(pb);
     }
 
+    /**
+     * A trash call is a single call that can't be stopped, and on macOS the
+     * first one blocks on a one-time Automation consent prompt the user may
+     * take a while to answer — so this waits indefinitely rather than on a
+     * timeout.
+     */
     private static void run(ProcessBuilder pb) throws IOException {
         pb.redirectErrorStream(true);
         Process process = pb.start();
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         try {
-            if (!process.waitFor(30, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                throw new IOException("trash: timed out");
-            }
+            process.waitFor();
         } catch (InterruptedException e) {
+            process.destroyForcibly();
             Thread.currentThread().interrupt();
             throw new IOException("trash: interrupted", e);
         }
